@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+checkpoints/
+*.pt
+*.pth
+wandb/
+*.tmp
+.DS_Store
+
+notes.md
