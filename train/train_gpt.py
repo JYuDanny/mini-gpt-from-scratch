@@ -57,7 +57,7 @@ def train():
             x, y = batch
             x, y = x.to(device), y.to(device)
             
-            logits = model(x)  # (B, N, vocab_size)
+            logits, _ = model(x)  # (B, N, vocab_size)
             loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))  # flatten 计算
             
             optimizer.zero_grad()
@@ -96,7 +96,7 @@ def evaluate(model: GPT, loader: DataLoader, device: str, vocab_size: int) -> fl
         for batch in loader:
             x, y = batch
             x, y = x.to(device), y.to(device)
-            logits = model(x)
+            logits, _ = model(x)
             loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
             total_loss += loss.item()
     model.train()

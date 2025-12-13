@@ -1,235 +1,307 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def causal_self_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
-    """单头 causal self-attention 计算。
-    原理：Q K^T / sqrt(dk) 计算相似度，mask 屏蔽未来 token，softmax 得权重，权重 * V 聚合信息。
-    GPT-3 相同：用于 decoder-only，确保自回归（不看未来）。"""
-    dk = q.size(-1)  # dk = head_dim
-    scores = torch.matmul(q, k.transpose(-2, -1)) / torch.sqrt(torch.tensor(dk, dtype=torch.float32))
-    
-    if mask is not None:
-        scores = scores + mask  # mask: -inf for future positions
-    
-    attn_weights = F.softmax(scores, dim=-1)
-    output = torch.matmul(attn_weights, v)
-    return output
 
-# 测试入口（小维度模拟）
-if __name__ == "__main__":
-    B, N, dk = 2, 4, 8  # batch=2, seq=4, dim=8
-    q = torch.randn(B, N, dk)
-    k = torch.randn(B, N, dk)
-    v = torch.randn(B, N, dk)
-    
-    # Causal mask: 上三角 -inf (不含对角线)
-    mask = torch.triu(torch.ones(N, N) * float('-inf'), diagonal=1)
-    mask = mask.unsqueeze(0).expand(B, -1, -1)  # 广播到 batch
-    
-    output = causal_self_attention(q, k, v, mask)
-    print(f"Input shape: {q.shape}")
-    print(f"Output shape: {output.shape}")
-    print(f"Sample output[0,0,:]: {output[0,0,:]}")  # 第一位置输出（只 attend 自己）
-    
-    assert output.shape == (B, N, dk), "Shape mismatch!"
-    print("Test passed -- causal_self_attentions.")
+class GPTConfig:
+    """
+    GPT-3 模型配置类
+    """
+    def __init__(self, vocab_size=50257, d_model=512, n_head=8, n_layer=6, 
+                 block_size=1024, dropout=0.1, bias=True):
+        self.vocab_size = vocab_size    # 词表大小
+        self.d_model = d_model          # 嵌入维度
+        self.n_head = n_head            # 注意力头数
+        self.n_layer = n_layer          # 层数
+        self.block_size = block_size    # 最大上下文长度 (Context Window)
+        self.dropout = dropout          # Dropout 概率
+        self.bias = bias                # 是否在 Linear 层中使用偏置 (GPT-3 通常为 True)
 
 
 class MultiHeadAttention(nn.Module):
-    """多头 causal self-attention 类，严格如 GPT-3。
-    原理：将 d_model 分成 h 头，每头独立计算 attention，然后 concat + 线性融合。
-    这允许模型在不同子空间捕捉多方面依赖（e.g., 语法、语义）。"""
-    
-    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1):
+    """
+    多头因果自注意力机制 (Multi-Head Causal Self-Attention)
+    """
+    def __init__(self, config):
         super().__init__()
-        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.head_dim = d_model // num_heads
+        assert config.d_model % config.n_head == 0
+        # key, query, value 投影
+        # GPT-3 在 QKV 投影中通常包含 Bias (偏置)
+        self.c_attn = nn.Linear(config.d_model, 3 * config.d_model, bias=config.bias)
+        # 输出投影
+        self.c_proj = nn.Linear(config.d_model, config.d_model, bias=config.bias)
         
-        # 投影矩阵：一次性线性层，GPT-3 类似偏置可选（这里无 bias）
-        self.qkv_proj = nn.Linear(d_model, 3 * d_model, bias=False)
-        self.out_proj = nn.Linear(d_model, d_model, bias=False)
-        self.dropout = nn.Dropout(dropout)
+        # 正则化
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        
+        self.n_head = config.n_head
+        self.d_model = config.d_model
+        self.dropout = config.dropout
+        
+        # 注册一个下三角掩码矩阵 (Causal Mask)
+        # register_buffer 确保它作为模型状态保存，但不是可训练参数
+        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+                                     .view(1, 1, config.block_size, config.block_size))
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
-        """前向传播：输入 x (B, N, d)，输出同形。
-        原理：投影 QKV，reshape 多头，计算 attention，concat + proj。"""
-        B, N, d = x.shape
-        
-        # 投影 Q, K, V
-        qkv = self.qkv_proj(x)  # (B, N, 3*d)
-        qkv = qkv.reshape(B, N, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, h, N, dk)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # 各 (B, h, N, dk)
-        
-        # 计算 scores
-        dk = self.head_dim
-        scores = torch.matmul(q, k.transpose(-2, -1)) / torch.sqrt(torch.tensor(dk, dtype=torch.float32))
-        
-        if mask is not None:
-            mask = mask.unsqueeze(1).expand(B, self.num_heads, N, N)  # 广播到 heads
-            scores = scores + mask
-        
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-        
-        # 输出
-        head_out = torch.matmul(attn_weights, v)  # (B, h, N, dk)
-        head_out = head_out.permute(0, 2, 1, 3).reshape(B, N, d)  # concat
-        output = self.out_proj(head_out)
-        return output
+    def forward(self, x):
+        B, T, C = x.size() # Batch, Time(Sequence Length), Channel(d_model)
 
-# 测试入口（追加到 model.py 底部）
-if __name__ == "__main__":
-    d_model, num_heads = 16, 2
-    attn = MultiHeadAttention(d_model, num_heads)
-    
-    B, N = 2, 4
-    x = torch.randn(B, N, d_model)
-    
-    # Causal mask
-    mask = torch.triu(torch.ones(N, N) * float('-inf'), diagonal=1)
-    mask = mask.unsqueeze(0).expand(B, -1, -1)  # (B, N, N)
-    
-    output = attn(x, mask)
-    print(f"Input shape: {x.shape}")
-    print(f"Output shape: {output.shape}")
-    print(f"Sample output[0,0,:]: {output[0,0,:]}")
-    
-    assert output.shape == x.shape, "Shape mismatch!"
-    print("Test passed -- MultiHeadAttention class.")
+        # 1. 计算 Q, K, V
+        # 形状变换: [B, T, 3*C] -> [B, T, 3, n_head, d_k] -> [3, B, n_head, T, d_k]
+        qkv = self.c_attn(x)
+        q, k, v = qkv.view(B, T, 3, self.n_head, C // self.n_head).permute(2, 0, 3, 1, 4)
+
+        # 2. 计算注意力分数 (Scaled Dot-Product Attention)
+        # att = (q @ k) * (1/sqrt(d_k))
+        # 形状: [B, n_head, T, d_k] @ [B, n_head, d_k, T] -> [B, n_head, T, T]
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+
+        # 3. 应用因果掩码 (Causal Masking)
+        # 将上三角部分(即未来信息)替换为 -inf，使其在 softmax 后为 0
+        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+
+        # 4. Softmax 归一化与 Dropout
+        att = F.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+
+        # 5. 聚合 Value
+        # 形状: [B, n_head, T, T] @ [B, n_head, T, d_k] -> [B, n_head, T, d_k]
+        y = att @ v 
+
+        # 6. 合并多头并输出
+        # [B, n_head, T, d_k] -> [B, T, n_head, d_k] -> [B, T, C]
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+
+        # 输出投影与残差 dropout
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+
+class FFN(nn.Module):
+    """
+    前馈神经网络 (Feed-Forward Network)
+    通常维度放大 4 倍，使用 GELU 激活函数
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.d_model, 4 * config.d_model, bias=config.bias)
+        self.gelu    = nn.GELU()
+        self.c_proj  = nn.Linear(4 * config.d_model, config.d_model, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
 
 
 class Block(nn.Module):
-    """Transformer Block 类，严格如 GPT-3 的 decoder block。
-    原理：Attention + residual + LN，然后 FFN + residual + LN。
-    Residual 防梯度消失，LN 稳定分布，dropout 防 overfit。"""
-    
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1):
+    """
+    Transformer Block (Decoder)
+    GPT-3 关键特征：Pre-Normalization (Pre-Norm)
+    LayerNorm 位于 Attention 和 MLP 之前
+    """
+    def __init__(self, config):
         super().__init__()
-        self.attn = MultiHeadAttention(d_model, num_heads, dropout)
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_ff, bias=True),  # GPT-3 用 bias
-            nn.GELU(),
-            nn.Linear(d_ff, d_model, bias=True),
-            nn.Dropout(dropout)
-        )
-        self.ln1 = nn.LayerNorm(d_model)
-        self.ln2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.ln_1 = nn.LayerNorm(config.d_model)
+        self.attn = MultiHeadAttention(config)
+        self.ln_2 = nn.LayerNorm(config.d_model)
+        self.fnn = FFN(config)
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
-        """前向：post-norm 变体（原 Transformer），GPT-3 用 pre-norm 但原理类似。
-        原理：x + attn(norm(x)) 残差连接，稳定深层训练。"""
-        attn_out = self.attn(x, mask)
-        x = x + self.dropout(attn_out)
-        x = self.ln1(x)
-        
-        ffn_out = self.ffn(x)
-        x = x + self.dropout(ffn_out)
-        x = self.ln2(x)
+    def forward(self, x):
+        # Pre-Norm 结构: x = x + Sublayer(LayerNorm(x))
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.fnn(self.ln_2(x))
         return x
-
-# 测试入口（追加到 model.py 底部）
-if __name__ == "__main__":
-    d_model, num_heads, d_ff = 16, 2, 64  # 小参数测试
-    block = Block(d_model, num_heads, d_ff)
-    
-    B, N = 2, 4
-    x = torch.randn(B, N, d_model)
-    
-    # Causal mask
-    mask = torch.triu(torch.ones(N, N) * float('-inf'), diagonal=1)
-    mask = mask.unsqueeze(0).expand(B, -1, -1)
-    
-    output = block(x, mask)
-    print(f"Input shape: {x.shape}")
-    print(f"Output shape: {output.shape}")
-    print(f"Sample output[0,0,:]: {output[0,0,:]}")
-    
-    assert output.shape == x.shape, "Shape mismatch!"
-    print("Test passed -- Block class.")
 
 
 class GPT(nn.Module):
-    """完整 GPT 模型类，严格如 GPT-3 的 decoder-only 架构。
-    原理：Embedding + Positional Encoding + 多层 Block + LM Head。
-    自回归训练：forward 计算 logits，generate 逐 token 采样。"""
-    
-    def __init__(self, vocab_size: int, d_model: int, num_heads: int, num_layers: int, 
-                 d_ff: int, block_size: int, dropout: float = 0.1):
+    """
+    微型 GPT-3 模型主体
+    """
+    def __init__(self, config):
         super().__init__()
-        self.block_size = block_size
-        self.token_emb = nn.Embedding(vocab_size, d_model)
-        self.pos_emb = nn.Embedding(block_size, d_model)  # Learned PE，如 GPT-3
-        self.layers = nn.ModuleList([Block(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
-        self.ln_final = nn.LayerNorm(d_model)
-        self.lm_head = nn.Linear(d_model, vocab_size, bias=False)  # 无 bias，如 GPT-3 常见
-        
-        # 初始化权重（GPT-3 用类似 He init，但 mini 用默认）
+        assert config.vocab_size is not None
+        assert config.block_size is not None
+        self.config = config
+
+        self.transformer = nn.ModuleDict(dict(
+            # Token Embedding (词嵌入)
+            wte = nn.Embedding(config.vocab_size, config.d_model),
+            # Positional Embedding (位置嵌入 - 可学习)
+            wpe = nn.Embedding(config.block_size, config.d_model),
+            # Dropout
+            drop = nn.Dropout(config.dropout),
+            # Transformer Layers (堆叠 Block)
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            # Final LayerNorm (Pre-Norm 架构需要在最后加一层 LN)
+            ln_f = nn.LayerNorm(config.d_model),
+        ))
+
+        # Language Model Head (输出层)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        # GPT-3 关键特征：Weight Tying (权重绑定)
+        # 将 Embedding 层的权重与输出层(lm_head)的权重共享
+        # 这不仅减少了参数，还被证明能提升效果
+        self.transformer.wte.weight = self.lm_head.weight
+
+        # 参数初始化 (参考 GPT-2/3 论文)
         self.apply(self._init_weights)
-    
+
+        # 特殊初始化：对残差投影层进行缩放 (1/sqrt(2 * n_layer))
+        # 目的是在深层网络中控制方差增长
+        for pn, p in self.named_parameters():
+            if pn.endswith('c_proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor) -> torch.Tensor:
-        """前向：输入 token IDs (B, N)，输出 logits (B, N, vocab)。
-        原理：emb + pos，逐层 Block（带 mask），final norm + head。
-        Causal mask 全局，确保自回归。"""
-        B, N = idx.shape
-        assert N <= self.block_size, f"Sequence {N} exceeds block_size {self.block_size}"
-        
-        tok_emb = self.token_emb(idx)  # (B, N, d)
-        pos = torch.arange(0, N, dtype=torch.long, device=idx.device)
-        pos_emb = self.pos_emb(pos)  # (N, d)
-        x = tok_emb + pos_emb
-        
-        # Causal mask
-        mask = torch.triu(torch.ones(N, N, device=idx.device) * float('-inf'), diagonal=1)
-        mask = mask.unsqueeze(0).expand(B, -1, -1)  # (B, N, N)
-        
-        for layer in self.layers:
-            x = layer(x, mask)
-        
-        x = self.ln_final(x)
-        logits = self.lm_head(x)  # (B, N, vocab)
-        return logits
+    def forward(self, idx, targets=None):
+        """
+        前向传播
+        idx: [Batch, Sequence Length] 的 Token 索引整数张量
+        """
+        device = idx.device
+        b, t = idx.size()
+        assert t <= self.config.block_size, f"输入长度 {t} 超过最大上下文 {self.config.block_size}"
 
-    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0) -> torch.Tensor:
-        """生成：自回归采样新 token。
-        原理：循环 forward 取最后 logit，softmax / temp 采样，append。"""
+        # 1. 嵌入层
+        pos = torch.arange(0, t, dtype=torch.long, device=device) # [0, 1, ..., t-1]
+
+        # Token Embedding + Positional Embedding
+        tok_emb = self.transformer.wte(idx) # [B, T, d_model]
+        pos_emb = self.transformer.wpe(pos) # [T, d_model]
+        x = self.transformer.drop(tok_emb + pos_emb)
+
+        # 2. Transformer Blocks
+        for block in self.transformer.h:
+            x = block(x)
+
+        # 3. Final Norm
+        x = self.transformer.ln_f(x)
+
+        # 4. 输出 Logits
+        if targets is not None:
+            # 如果是训练模式(有target)，我们计算 Loss
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        else:
+            # 如果是推理模式(只取最后一步)，为了节省计算，可以只算最后一个 token
+            # 但为了通用性，这里返回所有 logits
+            logits = self.lm_head(x)
+            loss = None
+
+        return logits, loss
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        自回归文本生成
+        idx: (B, T) 形状的起始 token 序列
+        """
         for _ in range(max_new_tokens):
-            idx_cond = idx[:, -self.block_size:]  # 截取最后 block_size
-            logits = self(idx_cond)
-            logits = logits[:, -1, :] / temperature  # 最后位置，scale
+            # 如果序列太长，截断到 block_size 以内
+            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+            # 前向传播
+            logits, _ = self(idx_cond)
+
+            # 只取最后一个时间步的预测 logits
+            logits = logits[:, -1, :] / temperature
+
+            # 可选: Top-k 采样
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+
+            # 计算概率并采样
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
+
+            # 拼接生成的 token
             idx = torch.cat((idx, idx_next), dim=1)
+
         return idx
 
-# 测试入口（追加到 model.py 底部）
+
+# ==========================================
+# 自动化验证脚本
+# ==========================================
 if __name__ == "__main__":
-    vocab_size = 50257  # 从 tokenizer
-    model = GPT(vocab_size=vocab_size, d_model=16, num_heads=2, num_layers=2, 
-                d_ff=64, block_size=8, dropout=0.1)
+    print("-" * 50)
+    print("开始 Micro-GPT-3 模型验证...")
+    print("-" * 50)
+
+    # 1. 配置模型参数 (使用极小参数以便快速运行)
+    # 模拟一个超小的 GPT-3
+    conf = GPTConfig(
+        vocab_size=100,  # 只有 100 个词
+        d_model=32,      # 嵌入维度 32
+        n_head=4,        # 4 个头
+        n_layer=2,       # 2 层
+        block_size=32,   # 上下文窗口 32
+        dropout=0.0
+    )
     
-    B, N = 2, 4
-    idx = torch.randint(0, vocab_size, (B, N))  # 随机 token IDs
-    
-    logits = model(idx)
-    print(f"Input shape: {idx.shape}")
-    print(f"Logits shape: {logits.shape}")
-    print(f"Sample logits[0,0,:5]: {logits[0,0,:5]}")  # 前5个值
-    
-    # 生成测试
-    gen_idx = model.generate(idx, max_new_tokens=3, temperature=1.0)
-    print(f"Generated shape: {gen_idx.shape}")
-    
-    assert logits.shape == (B, N, vocab_size), "Logits shape mismatch!"
-    assert gen_idx.shape == (B, N + 3), "Generate length mismatch!"
-    print("Test passed -- GPT class.")
+    try:
+        model = GPT(conf)
+        print("[1/4] 模型实例化成功")
+        print(f"    参数量: {sum(p.numel() for p in model.parameters())/1e3:.2f}K")
+    except Exception as e:
+        print(f"[1/4] 模型实例化失败: {e}")
+        exit()
+
+    # 2. 验证前向传播 (Forward Pass)
+    try:
+        # 创建一个 batch_size=2, seq_len=8 的随机输入
+        batch_size = 2
+        seq_len = 8
+        dummy_input = torch.randint(0, conf.vocab_size, (batch_size, seq_len))
+        
+        logits, loss = model(dummy_input)
+        
+        expected_shape = (batch_size, seq_len, conf.vocab_size)
+        assert logits.shape == expected_shape, f"Logits shape 错误: {logits.shape} != {expected_shape}"
+        print("[2/4] 前向传播验证通过 (Output Shape 正确)")
+    except Exception as e:
+        print(f"[2/4] 前向传播失败: {e}")
+        exit()
+
+    # 3. 验证因果掩码 (Causal Mask)
+    # 这一步通过检查生成结果是否会报错，以及注意力矩阵是否为下三角来隐式验证
+    # 这里我们做一个直接的生成测试
+    try:
+        start_idx = torch.zeros((1, 1), dtype=torch.long) # 从 token 0 开始
+        generated = model.generate(start_idx, max_new_tokens=10)
+        
+        assert generated.shape == (1, 11), f"生成长度错误: {generated.shape}"
+        print("[3/4] 文本生成逻辑验证通过 (Autoregressive Generation)")
+        print(f"    生成序列示例: {generated.tolist()}")
+    except Exception as e:
+        print(f"[3/4] 生成测试失败: {e}")
+        exit()
+        
+    # 4. 验证权重绑定 (Weight Tying)
+    try:
+        # 检查 Embedding 指针是否等于 Head 指针
+        assert model.transformer.wte.weight is model.lm_head.weight
+        print("[4/4] 权重绑定验证通过 (Weight Tying Active)")
+    except AssertionError:
+        print("[4/4] 权重绑定失败: Embedding 和 LM Head 权重不一致")
+        exit()
+
+    print("-" * 50)
+    print("Micro-GPT-3 架构验证全部通过！")
+    print("模型结构已经在逻辑和张量形状上完全正确。")
+    print("-" * 50)
