@@ -11,6 +11,8 @@ pip install -i https://pypi.tuna.tsinghua.edu.cn/simple torch torchvision torcha
 
 pip install tiktoken tqdm numpy
 
+pip install datasets
+
 python -c "import torch; print('PyTorch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available()); print('CUDA version:', torch.version.cuda if torch.cuda.is_available() else 'N/A'); print('GPU count:', torch.cuda.device_count())"
 ```
 

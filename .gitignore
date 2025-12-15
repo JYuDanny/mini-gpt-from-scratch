@@ -6,5 +6,4 @@ checkpoints/
 wandb/
 *.tmp
 .DS_Store
-experiments/*.md
 data/*.bin
