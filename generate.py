@@ -8,7 +8,13 @@ def main():
     """独立生成脚本，加载 checkpoint 生成文本。
     原理：eval 模式下 autoregressive 采样，temperature 控制随机性。"""
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if torch.cuda.is_available():
+        device = 'cuda'
+    elif torch.backends.mps.is_available():
+        device = 'mps'
+    else:
+        device = 'cpu'
+    print(f"Running test on: {device}")
     checkpoint_path = 'checkpoints/best_model.pt'
 
     # 配置需匹配训练（使用 GPTConfig 类初始化）

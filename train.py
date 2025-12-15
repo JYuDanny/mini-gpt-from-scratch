@@ -23,11 +23,17 @@ def get_lr(it, max_iters, learning_rate, warmup_iters=100, min_lr=1e-5):
     return min_lr + coeff * (learning_rate - min_lr)
 
 def train():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if torch.cuda.is_available():
+        device = 'cuda'
+    elif torch.backends.mps.is_available():
+        device = 'mps'
+    else:
+        device = 'cpu'
+    print(f"Running test on: {device}")
 
     # --- 配置参数 ---
     batch_size = 32
-    block_size = 128
+    block_size = 128  # 256 依然不会 OOM，但训练速度严重下降
     d_model = 768
     n_head = 6
     n_layer = 6
@@ -35,7 +41,7 @@ def train():
     bias = True
 
     learning_rate = 2e-4  # 稍微调高初始 LR，依靠调度器控制
-    max_iters = 10000      # 我们改用迭代次数控制，而不是 Epoch，这样更直观
+    max_iters = 6000      # 我们改用迭代次数控制，而不是 Epoch，这样更直观
     eval_interval = 1000
     eval_iters = 50       # 每次验证只跑 50 个 batch，防止卡顿
     checkpoint_dir = 'checkpoints'
