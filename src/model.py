@@ -173,7 +173,7 @@ class GPT(nn.Module):
         idx: [Batch, Sequence Length] 的 Token 索引整数张量
         """
         device = idx.device
-        b, t = idx.size()
+        _, t = idx.size()
         assert t <= self.config.block_size, f"输入长度 {t} 超过最大上下文 {self.config.block_size}"
 
         # 1. 嵌入层
