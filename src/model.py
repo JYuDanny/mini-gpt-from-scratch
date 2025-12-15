@@ -5,6 +5,29 @@ import torch.nn.functional as F
 
 
 class GPTConfig:
+    def __init__(self, vocab_size=50257, d_model=512, n_head=8, n_layer=6, 
+                 block_size=1024, dropout=0.1, bias=True, **kwargs):
+        # **kwargs 接收所有多余的参数，防止报错
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self.n_head = n_head
+        self.n_layer = n_layer
+        self.block_size = block_size
+        self.dropout = dropout
+        self.bias = bias
+
+    def to_dict(self):
+        return {
+            'vocab_size': self.vocab_size,
+            'd_model': self.d_model,
+            'n_head': self.n_head,
+            'n_layer': self.n_layer,
+            'block_size': self.block_size,
+            'dropout': self.dropout,
+            'bias': self.bias
+        }
+
+class GPTConfig:
     """
     GPT-3 模型配置类
     """

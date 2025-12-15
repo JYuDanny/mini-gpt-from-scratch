@@ -1,3 +1,4 @@
+# --- train.py ---
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -5,12 +6,15 @@ from torch.optim import AdamW
 from tqdm import tqdm
 import os
 import math
+import argparse
+import yaml
+import sys
 
 from src.dataset import BinaryDataset
 from src.tokenizer import Tokenizer
 from src.model import GPT, GPTConfig
 
-# --- 新增：简单的学习率调度器 ---
+# --- 简单的学习率调度器 ---
 def get_lr(it, max_iters, learning_rate, warmup_iters=100, min_lr=1e-5):
     # 1. 线性预热 (Warmup)
     if it < warmup_iters:
@@ -22,67 +26,157 @@ def get_lr(it, max_iters, learning_rate, warmup_iters=100, min_lr=1e-5):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (learning_rate - min_lr)
 
+def get_config():
+    """
+    配置加载逻辑：
+    1. 定义命令行参数
+    2. 如果指定了 --config，先加载 YAML
+    3. 用命令行参数覆盖 YAML 中的同名参数
+    """
+    parser = argparse.ArgumentParser(description="Train GPT Model")
+    
+    # 配置文件路径
+    parser.add_argument('--config', type=str, default=None, help='Path to .yaml config file')
+    
+    # --- 定义所有可能的命令行参数 (默认值设为 None) ---
+    # 只有设为 None，我们才知道用户到底有没有在命令行里输入这个参数
+    # 如果用户没输，就用 YAML 里的；如果输了，就覆盖 YAML 里的。
+    
+    # System
+    parser.add_argument('--out_dir', type=str, default=None)
+    parser.add_argument('--resume', type=str, default=None)
+    parser.add_argument('--device', type=str, default=None)
+    
+    # Data
+    parser.add_argument('--batch_size', type=int, default=None)
+    
+    # Model
+    parser.add_argument('--n_layer', type=int, default=None)
+    parser.add_argument('--d_model', type=int, default=None)
+    parser.add_argument('--n_head', type=int, default=None)
+    parser.add_argument('--dropout', type=float, default=None)
+    
+    # Training
+    parser.add_argument('--lr', type=float, default=None)
+    parser.add_argument('--max_iters', type=int, default=None)
+
+    args = parser.parse_args()
+    
+    # --- 1. 初始化默认配置字典 (兜底) ---
+    config = {
+        'system': {'out_dir': 'checkpoints', 'device': 'auto', 'resume': None},
+        'data': {'data_dir': 'data', 'batch_size': 32, 'num_workers': 0},
+        'model': {'block_size': 128, 'd_model': 384, 'n_layer': 6, 'n_head': 6, 'dropout': 0.1, 'bias': True},
+        'optimizer': {'learning_rate': 3e-4, 'weight_decay': 1e-2},
+        'trainer': {'eval_interval': 1000, 'eval_iters': 50, 'max_iters': 6000}
+    }
+
+    # --- 2. 加载 YAML 并更新 ---
+    if args.config is not None:
+        print(f"Loading config from {args.config}...")
+        with open(args.config, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+            
+        # 递归更新字典 (这里做一个简单的深度更新)
+        for section, params in yaml_config.items():
+            if section in config:
+                config[section].update(params)
+            else:
+                config[section] = params # 新增的 section
+
+    # --- 3. 命令行参数覆盖 (Override) ---
+    # 这种映射有点繁琐，但在没有引入 Hydra 等重型库之前，这是最清晰的方法
+    if args.out_dir: config['system']['out_dir'] = args.out_dir
+    if args.resume:  config['system']['resume'] = args.resume
+    if args.device:  config['system']['device'] = args.device
+    if args.batch_size: config['data']['batch_size'] = args.batch_size
+    if args.n_layer: config['model']['n_layer'] = args.n_layer
+    if args.d_model: config['model']['d_model'] = args.d_model
+    if args.lr:      config['optimizer']['learning_rate'] = args.lr
+    if args.max_iters: config['trainer']['max_iters'] = args.max_iters
+    
+    return config
+
 def train():
-    if torch.cuda.is_available():
-        device = 'cuda'
-    elif torch.backends.mps.is_available():
-        device = 'mps'
+    # 获取最终配置字典
+    cfg = get_config()
+    
+    # 方便调用，提取一些变量
+    sys_cfg = cfg['system']
+    model_cfg = cfg['model']
+    data_cfg = cfg['data']
+    opt_cfg = cfg['optimizer']
+    train_cfg = cfg['trainer']
+
+    # 1. Device Setup
+    if sys_cfg['device'] == 'auto':
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
     else:
-        device = 'cpu'
-    print(f"Running test on: {device}")
-
-    # --- 配置参数 ---
-    batch_size = 32
-    block_size = 128  # 256 依然不会 OOM，但训练速度严重下降
-    d_model = 768
-    n_head = 6
-    n_layer = 6
-    dropout = 0.1
-    bias = True
-
-    learning_rate = 2e-4  # 稍微调高初始 LR，依靠调度器控制
-    max_iters = 6000      # 我们改用迭代次数控制，而不是 Epoch，这样更直观
-    eval_interval = 1000
-    eval_iters = 50       # 每次验证只跑 50 个 batch，防止卡顿
-    checkpoint_dir = 'checkpoints'
-    os.makedirs(checkpoint_dir, exist_ok=True)
-
-    # --- 数据准备 ---
-    train_dataset = BinaryDataset(data_dir='data', block_size=block_size, split='train')
-    val_dataset = train_dataset
+        device = sys_cfg['device']
+    print(f"Running on: {device}")
+    
+    os.makedirs(sys_cfg['out_dir'], exist_ok=True)
+    
+    # 2. Dataset
     tokenizer = Tokenizer()
+    train_dataset = BinaryDataset(data_dir=data_cfg['data_dir'], block_size=model_cfg['block_size'], split='train')
+    val_dataset = train_dataset # 简化
+    
+    train_loader = DataLoader(train_dataset, batch_size=data_cfg['batch_size'], shuffle=True, num_workers=data_cfg['num_workers'])
+    val_loader = DataLoader(val_dataset, batch_size=data_cfg['batch_size'], shuffle=True, num_workers=data_cfg['num_workers'])
 
-    # 必须设置 shuffle=True，这样 DataLoader 会随机读取 dataset 中的位置
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-
-    # 验证集可以不 shuffle，但建议随机采一些
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-
-    # --- 模型初始化 ---
-    config = GPTConfig(
-        vocab_size=tokenizer.vocab_size,
-        d_model=d_model, n_head=n_head, n_layer=n_layer,
-        block_size=block_size, dropout=dropout, bias=bias
-    )
-    model = GPT(config)
+    # 3. Model
+    # 这里的关键是：vocab_size 来自 tokenizer，其他来自 config
+    model_args = model_cfg.copy()
+    model_args['vocab_size'] = tokenizer.vocab_size
+    
+    # GPTConfig 接收 **kwargs，所以我们可以直接传入字典
+    gpt_conf = GPTConfig(**model_args)
+    model = GPT(gpt_conf)
     model.to(device)
 
-    # 打印参数量
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
-
-    optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-2)
-
+    # 4. Optimizer
+    optimizer = AdamW(model.parameters(), lr=opt_cfg['learning_rate'], weight_decay=opt_cfg['weight_decay'])
+    
+    # 初始化训练状态变量 (默认为从头训练)
+    iter_num = 0
     best_val_loss = float('inf')
+
+    # --- 断点续训逻辑 (Resume) ---
+    if sys_cfg['resume'] is not None:
+        ckpt_path = sys_cfg['resume']
+        if os.path.exists(ckpt_path):
+            print(f"Resuming training from {ckpt_path}...")
+            # map_location 确保在 cpu/cuda 之间迁移时不会报错
+            checkpoint = torch.load(ckpt_path, map_location=device)
+            
+            # 1. 恢复模型权重
+            # 注意：这里的模型架构配置必须与 checkpoint 里的匹配，否则会报形状不匹配错误
+            model.load_state_dict(checkpoint['model'])
+            
+            # 2. 恢复优化器状态
+            # 包含动量(momentum)和自适应学习率的历史信息，对 AdamW 尤为重要
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            
+            # 3. 恢复标量状态
+            iter_num = checkpoint['iter_num']
+            best_val_loss = checkpoint['best_val_loss']
+            
+            print(f"Loaded checkpoint '{ckpt_path}' (iter {iter_num}, best_loss {best_val_loss:.4f})")
+        else:
+            print(f"Warning: Checkpoint {ckpt_path} not found. Starting from scratch.")
+
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
+    
     model.train()
-
-    # 使用 iter 手动控制 loader，实现无限循环直到 max_iters
+    iter_num = 0
+    max_iters = train_cfg['max_iters']
+    best_val_loss = float('inf')
+    
     train_iter = iter(train_loader)
-
-    # --- 训练循环 (使用 tqdm 包装 range) ---
     pbar = tqdm(range(max_iters), desc="Training")
-
+    
     for step in pbar:
-        # 1. 获取 Batch (如果读完了就重新开始)
         try:
             x, y = next(train_iter)
         except StopIteration:
@@ -91,47 +185,39 @@ def train():
 
         x, y = x.to(device), y.to(device)
 
-        # 2. 更新学习率 (LR Schedule)
-        lr = get_lr(step, max_iters, learning_rate)
+        lr = get_lr(step, max_iters, opt_cfg['learning_rate'])
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-        # 3. 前向传播与反向传播
         _, loss = model(x, targets=y)
         optimizer.zero_grad()
         loss.backward()
-
-        # 4. 梯度裁剪 (Gradient Clipping) - 关键技巧！
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
         optimizer.step()
 
-        # 5. 更新进度条显示的 Loss
         pbar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{lr:.2e}")
 
-        # 6. 定期评估 (Eval)
-        if (step + 1) % eval_interval == 0:
-            # 使用 tqdm.write 防止进度条错位
-            tqdm.write(f"\n--- Step {step+1}: Evaluating ---")
+        if (step + 1) % train_cfg['eval_interval'] == 0:
+            val_loss = evaluate(model, val_loader, device, train_cfg['eval_iters'])
+            tqdm.write(f"\nStep {step+1} | Val Loss: {val_loss:.4f}")
 
-            val_loss = evaluate(model, val_loader, device, eval_iters)
-            tqdm.write(f"Validation Loss: {val_loss:.4f}")
+            # 保存 Checkpoint
+            # 重点：我们保存整个 cfg 字典，这样以后能完全复现
+            checkpoint = {
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'config': gpt_conf, # 保存 GPTConfig 对象，方便推理加载
+                'full_config': cfg, # 保存完整的 YAML 配置，方便人类查看
+                'iter_num': step + 1,
+                'best_val_loss': best_val_loss,
+            }
 
-            # 生成测试
-            model.eval()
-            ctx = torch.tensor([tokenizer.encode("First Citizen:")]).to(device)
-            gen = model.generate(ctx, max_new_tokens=50, temperature=0.8)
-            decoded = tokenizer.decode(gen[0].tolist())
-            tqdm.write(f"Generate sample: {decoded.strip()}\n")
-            model.train()
-
-            # 保存模型
+            torch.save(checkpoint, os.path.join(sys_cfg['out_dir'], 'ckpt_latest.pt'))
+            
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                torch.save(model.state_dict(), os.path.join(checkpoint_dir, 'best_model.pt'))
-                tqdm.write("Saved best model.")
+                torch.save(checkpoint, os.path.join(sys_cfg['out_dir'], 'ckpt_best.pt'))
 
-    return model, tokenizer
 
 @torch.no_grad()
 def evaluate(model, loader, device, eval_iters):

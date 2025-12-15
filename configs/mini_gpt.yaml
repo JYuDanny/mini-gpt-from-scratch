@@ -1,0 +1,31 @@
+# configs/mini_gpt.yaml
+
+system:
+  out_dir: 'checkpoints/gpt_small'
+  device: 'auto'
+  resume: null  # null 在 python 中会被读作 None
+
+data:
+  data_dir: 'data'
+  batch_size: 64
+  num_workers: 0
+
+model:
+  vocab_size: 50257  # 这个通常由 tokenizer 决定，但可以在此占位
+  block_size: 128
+  d_model: 384
+  n_layer: 6
+  n_head: 6
+  dropout: 0.1
+  bias: true
+
+optimizer:
+  learning_rate: 3.0e-4
+  max_iters: 5000
+  weight_decay: 1.0e-2
+  beta1: 0.9
+  beta2: 0.95
+
+trainer:
+  eval_interval: 500
+  eval_iters: 50
