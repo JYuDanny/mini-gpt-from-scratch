@@ -205,7 +205,7 @@ class GPT(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, eos_id=None):
         """
         自回归文本生成
         idx: (B, T) 形状的起始 token 序列
@@ -228,6 +228,10 @@ class GPT(nn.Module):
             # 计算概率并采样
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
+            
+            # 早停检查
+            if eos_id is not None and idx_next.item() == eos_id:
+                break
 
             # 拼接生成的 token
             idx = torch.cat((idx, idx_next), dim=1)
