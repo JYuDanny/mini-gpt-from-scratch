@@ -1,4 +1,5 @@
 # --- generate.py ---
+import time
 import torch
 import argparse
 import os
@@ -9,16 +10,16 @@ from src.model import GPT, GPTConfig
 
 def parse_args():
     parser = argparse.ArgumentParser(description="GPT Text Generation")
-    
+
     # 只需要指定模型路径，不需要指定层数等参数
-    parser.add_argument('--ckpt', type=str, default='checkpoints/ckpt_best.pt', help='模型 checkpoint 路径')
+    parser.add_argument('--ckpt', type=str, default='checkpoints/mini_gpt/ckpt_best.pt', help='模型 checkpoint 路径')
     parser.add_argument('--prompt', type=str, default='', help='提示文本 (留空则手动输入)')
     parser.add_argument('--num_samples', type=int, default=1, help='生成样本数量')
     parser.add_argument('--max_new_tokens', type=int, default=200, help='生成最大长度')
     parser.add_argument('--temperature', type=float, default=0.8, help='采样温度')
     parser.add_argument('--top_k', type=int, default=200, help='Top-K 采样')
     parser.add_argument('--device', type=str, default='auto', help='设备')
-    
+
     return parser.parse_args()
 
 def main():
@@ -37,10 +38,10 @@ def main():
     if not os.path.exists(args.ckpt):
         print(f"Error: Checkpoint file {args.ckpt} not found.")
         sys.exit(1)
-        
+
     print(f"Loading model from {args.ckpt}...")
-    checkpoint = torch.load(args.ckpt, map_location=device)
-    
+    checkpoint = torch.load(args.ckpt, map_location=device, weights_only=False)
+
     # 3. 自动恢复配置 (关键步骤)
     # 我们的 train.py 保存了 'config' 字段
     if 'config' in checkpoint:
@@ -49,7 +50,7 @@ def main():
         # 兼容旧版或未保存config的情况 (fallback)
         print("Warning: Config not found in checkpoint, utilizing default GPTConfig.")
         config = GPTConfig() 
-    
+
     # 4. 初始化模型并加载权重
     model = GPT(config)
     model.load_state_dict(checkpoint['model'])
@@ -69,6 +70,7 @@ def main():
     x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 
     print("\n--- Generating ---")
+    time1 = time.perf_counter()
     with torch.no_grad():
         for k in range(args.num_samples):
             y = model.generate(
@@ -81,6 +83,8 @@ def main():
             print(f"Sample {k+1}:")
             print(tokenizer.decode(y[0].tolist()))
             print("-" * 50)
+    time2 = time.perf_counter()
+    print(f'\nTotal time: {time2 - time1:.4f}s')
 
 if __name__ == "__main__":
     main()

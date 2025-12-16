@@ -21,7 +21,7 @@ os.makedirs(output_dir, exist_ok=True)
 def process(dataset_name):
     # 1. 加载分词器
     enc = tiktoken.get_encoding("gpt2")
-    
+
     # 2. 下载数据集 (使用 streaming=True 以防内存溢出)
     print(f"Loading dataset: {dataset_name}...")
     # split="train" 表示只下载训练集
@@ -34,34 +34,34 @@ def process(dataset_name):
     arr_len = 0
     arr = []
     total_tokens = 0
-    
+
     # 为了演示，我们限制处理的样本数量，防止你硬盘爆了
     # 如果你想跑全量，可以把 max_samples 设得非常大
-    max_samples = 200_000  # TinyStories 约有 200万+ 条，这里取 1/10 足够你玩了
-    
+    max_samples = 1_000_000  # TinyStories 约有 200万+ 条，这里取 1/10 足够你玩了
+
     filename = os.path.join(output_dir, "train.bin")
-    
+
     print(f"Processing and saving to {filename}...")
-    
+
     # 使用 tqdm 显示进度
     with open(filename, "wb") as f:
         for idx, item in tqdm(enumerate(dataset), total=max_samples):
             if idx >= max_samples:
                 break
-                
+
             text = item['text'] # 大多数数据集的文本字段叫 'text'
-            
+
             # 编码: text -> list of integers
             ids = enc.encode(text, allowed_special={'<|endoftext|>'})
             ids.append(enc.eot_token) # 每个样本末尾加上结束符
-            
+
             # 转为 numpy uint16 并写入文件
             # 直接写入文件流，节省内存
             data = np.array(ids, dtype=np.uint16)
             f.write(data.tobytes())
-            
+
             total_tokens += len(ids)
-    
+
     print(f"Done! Saved {total_tokens} tokens to {filename}")
     print(f"File size: {os.path.getsize(filename) / 1024 / 1024:.2f} MB")
 

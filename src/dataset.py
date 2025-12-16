@@ -11,27 +11,27 @@ class BinaryDataset(Dataset):
     """
     def __init__(self, data_dir, block_size, split='train'):
         self.block_size = block_size
-        
+
         # 寻找 .bin 文件
         filename = os.path.join(data_dir, f"{split}.bin")
         if not os.path.exists(filename):
             # 如果没有 split.bin，尝试找 train.bin 作为回退
             print(f"Warning: {filename} not found, falling back to train.bin")
             filename = os.path.join(data_dir, "train.bin")
-            
+
         if not os.path.exists(filename):
             raise FileNotFoundError(f"No data file found in {data_dir}")
 
         # 获取文件大小
         file_size_bytes = os.path.getsize(filename)
-        
+
         # 计算总 token 数 (uint16 占 2 字节)
         total_tokens = file_size_bytes // 2
-        
+
         # 创建内存映射 (不会真正加载到 RAM，像虚拟内存一样读取)
         # mode='r' 表示只读
         self.data = np.memmap(filename, dtype=np.uint16, mode='r', shape=(total_tokens,))
-        
+
         print(f"Loaded dataset from {filename}")
         print(f"Total tokens: {total_tokens / 1e6:.2f}M")
 
@@ -43,24 +43,24 @@ class BinaryDataset(Dataset):
     def __getitem__(self, idx):
         # 从 memmap 中切片，非常快
         # 必须转为 int64 (long)，因为 PyTorch Embedding 层需要 long 类型
-        
+
         # 这里的 idx 是 dataset 的索引。
         # 在大规模训练中，通常我们随机取一段，而不是按顺序 idx
         # 但为了兼容 DataLoader 的标准接口，我们保留 idx
-        
+
         # 这里的逻辑稍微 tricky：
         # 如果 dataset 非常大，DataLoader 传入的 idx 可能会很大。
         # 我们可以直接用这个 idx 作为起始位置。
-        
+
         start = idx
         end = start + self.block_size + 1
-        
+
         chunk = torch.from_numpy(self.data[start:end].astype(np.int64))
-        
+
         # x 是输入，y 是目标 (右移一位)
         x = chunk[:-1]
         y = chunk[1:]
-        
+
         return x, y
 
 # --- 适配训练脚本的修改 ---

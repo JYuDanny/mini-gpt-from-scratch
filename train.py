@@ -55,20 +55,20 @@ def get_config():
     parser.add_argument('--d_model', type=int, default=None)
     parser.add_argument('--n_head', type=int, default=None)
     parser.add_argument('--dropout', type=float, default=None)
-    
+
     # Training
     parser.add_argument('--lr', type=float, default=None)
     parser.add_argument('--max_iters', type=int, default=None)
 
     args = parser.parse_args()
-    
+
     # --- 1. 初始化默认配置字典 (兜底) ---
     config = {
         'system': {'out_dir': 'checkpoints', 'device': 'auto', 'resume': None},
-        'data': {'data_dir': 'data', 'batch_size': 32, 'num_workers': 0},
-        'model': {'block_size': 128, 'd_model': 384, 'n_layer': 6, 'n_head': 6, 'dropout': 0.1, 'bias': True},
+        'data': {'data_dir': 'data', 'batch_size': 64, 'num_workers': 0},
+        'model': {'block_size': 128, 'd_model': 512, 'n_layer': 6, 'n_head': 6, 'dropout': 0.1, 'bias': True},
         'optimizer': {'learning_rate': 3e-4, 'weight_decay': 1e-2},
-        'trainer': {'eval_interval': 1000, 'eval_iters': 50, 'max_iters': 6000}
+        'trainer': {'eval_interval': 1000, 'eval_iters': 50, 'max_iters': 30000}
     }
 
     # --- 2. 加载 YAML 并更新 ---
@@ -76,7 +76,7 @@ def get_config():
         print(f"Loading config from {args.config}...")
         with open(args.config, 'r', encoding='utf-8') as f:
             yaml_config = yaml.safe_load(f)
-            
+
         # 递归更新字典 (这里做一个简单的深度更新)
         for section, params in yaml_config.items():
             if section in config:
@@ -94,13 +94,13 @@ def get_config():
     if args.d_model: config['model']['d_model'] = args.d_model
     if args.lr:      config['optimizer']['learning_rate'] = args.lr
     if args.max_iters: config['trainer']['max_iters'] = args.max_iters
-    
+
     return config
 
 def train():
     # 获取最终配置字典
     cfg = get_config()
-    
+
     # 方便调用，提取一些变量
     sys_cfg = cfg['system']
     model_cfg = cfg['model']
@@ -114,14 +114,14 @@ def train():
     else:
         device = sys_cfg['device']
     print(f"Running on: {device}")
-    
+
     os.makedirs(sys_cfg['out_dir'], exist_ok=True)
-    
+
     # 2. Dataset
     tokenizer = Tokenizer()
     train_dataset = BinaryDataset(data_dir=data_cfg['data_dir'], block_size=model_cfg['block_size'], split='train')
     val_dataset = train_dataset # 简化
-    
+
     train_loader = DataLoader(train_dataset, batch_size=data_cfg['batch_size'], shuffle=True, num_workers=data_cfg['num_workers'])
     val_loader = DataLoader(val_dataset, batch_size=data_cfg['batch_size'], shuffle=True, num_workers=data_cfg['num_workers'])
 
@@ -129,7 +129,7 @@ def train():
     # 这里的关键是：vocab_size 来自 tokenizer，其他来自 config
     model_args = model_cfg.copy()
     model_args['vocab_size'] = tokenizer.vocab_size
-    
+
     # GPTConfig 接收 **kwargs，所以我们可以直接传入字典
     gpt_conf = GPTConfig(**model_args)
     model = GPT(gpt_conf)
@@ -137,7 +137,7 @@ def train():
 
     # 4. Optimizer
     optimizer = AdamW(model.parameters(), lr=opt_cfg['learning_rate'], weight_decay=opt_cfg['weight_decay'])
-    
+
     # 初始化训练状态变量 (默认为从头训练)
     iter_num = 0
     best_val_loss = float('inf')
@@ -149,33 +149,33 @@ def train():
             print(f"Resuming training from {ckpt_path}...")
             # map_location 确保在 cpu/cuda 之间迁移时不会报错
             checkpoint = torch.load(ckpt_path, map_location=device)
-            
+
             # 1. 恢复模型权重
             # 注意：这里的模型架构配置必须与 checkpoint 里的匹配，否则会报形状不匹配错误
             model.load_state_dict(checkpoint['model'])
-            
+
             # 2. 恢复优化器状态
             # 包含动量(momentum)和自适应学习率的历史信息，对 AdamW 尤为重要
             optimizer.load_state_dict(checkpoint['optimizer'])
-            
+
             # 3. 恢复标量状态
             iter_num = checkpoint['iter_num']
             best_val_loss = checkpoint['best_val_loss']
-            
+
             print(f"Loaded checkpoint '{ckpt_path}' (iter {iter_num}, best_loss {best_val_loss:.4f})")
         else:
             print(f"Warning: Checkpoint {ckpt_path} not found. Starting from scratch.")
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
-    
+
     model.train()
     iter_num = 0
     max_iters = train_cfg['max_iters']
     best_val_loss = float('inf')
-    
+
     train_iter = iter(train_loader)
     pbar = tqdm(range(max_iters), desc="Training")
-    
+
     for step in pbar:
         try:
             x, y = next(train_iter)
@@ -213,7 +213,7 @@ def train():
             }
 
             torch.save(checkpoint, os.path.join(sys_cfg['out_dir'], 'ckpt_latest.pt'))
-            
+
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 torch.save(checkpoint, os.path.join(sys_cfg['out_dir'], 'ckpt_best.pt'))
