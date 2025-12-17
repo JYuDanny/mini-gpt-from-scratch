@@ -34,15 +34,15 @@ def train():
     # --- 配置参数 ---
     batch_size = 32
     block_size = 128  # 256 依然不会 OOM，但训练速度严重下降
-    d_model = 768
-    n_head = 6
+    d_model = 512
+    n_head = 4
     n_layer = 6
     dropout = 0.1
     bias = True
 
     learning_rate = 2e-4  # 稍微调高初始 LR，依靠调度器控制
-    max_iters = 6000      # 我们改用迭代次数控制，而不是 Epoch，这样更直观
-    eval_interval = 1000
+    max_iters = 30000      # 我们改用迭代次数控制，而不是 Epoch，这样更直观
+    eval_interval = 500
     eval_iters = 50       # 每次验证只跑 50 个 batch，防止卡顿
     checkpoint_dir = 'checkpoints'
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -119,7 +119,7 @@ def train():
 
             # 生成测试
             model.eval()
-            ctx = torch.tensor([tokenizer.encode("First Citizen:")]).to(device)
+            ctx = torch.tensor([tokenizer.encode("Once upon a time,")]).to(device)
             gen = model.generate(ctx, max_new_tokens=50, temperature=0.8)
             decoded = tokenizer.decode(gen[0].tolist())
             tqdm.write(f"Generate sample: {decoded.strip()}\n")

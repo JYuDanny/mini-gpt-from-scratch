@@ -20,8 +20,8 @@ def main():
     # 配置需匹配训练（使用 GPTConfig 类初始化）
     config = GPTConfig(
         vocab_size=50257,  # 从 tokenizer
-        d_model=768,
-        n_head=6,
+        d_model=512,
+        n_head=4,
         n_layer=6,
         block_size=128,
         dropout=0.1,
