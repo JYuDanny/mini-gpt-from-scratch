@@ -66,7 +66,7 @@ def get_config():
     config = {
         'system': {'out_dir': 'checkpoints', 'device': 'auto', 'resume': None},
         'data': {'data_dir': 'data', 'batch_size': 64, 'num_workers': 0},
-        'model': {'block_size': 128, 'd_model': 512, 'n_layer': 6, 'n_head': 6, 'dropout': 0.1, 'bias': True},
+        'model': {'block_size': 128, 'd_model': 512, 'n_layer': 6, 'n_head': 8, 'dropout': 0.1, 'bias': True},
         'optimizer': {'learning_rate': 3e-4, 'weight_decay': 1e-2},
         'trainer': {'eval_interval': 1000, 'eval_iters': 50, 'max_iters': 30000}
     }

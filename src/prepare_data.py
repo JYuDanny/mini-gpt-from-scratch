@@ -37,7 +37,7 @@ def process(dataset_name):
 
     # 为了演示，我们限制处理的样本数量，防止你硬盘爆了
     # 如果你想跑全量，可以把 max_samples 设得非常大
-    max_samples = 1_000_000  # TinyStories 约有 200万+ 条，这里取 1/10 足够你玩了
+    max_samples = 600_000  # TinyStories 约有 200万+ 条，这里取 1/10 足够你玩了
 
     filename = os.path.join(output_dir, "train.bin")
 

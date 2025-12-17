@@ -6,4 +6,4 @@ checkpoints/
 wandb/
 *.tmp
 .DS_Store
-data/*.bin
+data/
