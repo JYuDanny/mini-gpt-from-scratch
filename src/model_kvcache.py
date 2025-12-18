@@ -269,6 +269,10 @@ class GPT(nn.Module):
         past_kv = None
 
         for _ in range(max_new_tokens):
+            # 位置安全检查：如果 idx 的长度已经达到了 block_size，就不能再往后生成了
+            if idx.size(1) >= self.config.block_size:
+                print(f"\nWarning: Reached context limit ({self.config.block_size}). Stopping generation.")
+                break
             # 如果是第一次迭代(past_kv is None)，我们需要把完整的 prompt 传进去来计算初始的 KV
             # 如果不是第一次(past_kv 有值)，我们只需要传刚刚生成的最后一个 token
             if past_kv is None:
