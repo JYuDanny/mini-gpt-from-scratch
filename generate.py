@@ -6,7 +6,8 @@ import os
 import sys
 
 from src.tokenizer import Tokenizer
-from src.model import GPT, GPTConfig
+# from src.model import GPT, GPTConfig
+from src.model_kvcache import GPT, GPTConfig
 
 def parse_args():
     parser = argparse.ArgumentParser(description="GPT Text Generation")

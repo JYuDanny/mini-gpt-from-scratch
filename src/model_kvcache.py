@@ -4,7 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class GPTConfig:
-    def __init__(self, vocab_size=50257, d_model=512, n_head=8, n_layer=6, 
+    """
+    GPT-3 模型配置类
+    """
+    def __init__(self, vocab_size=50257, d_model=512, n_head=8, n_layer=6,
                  block_size=1024, dropout=0.1, bias=True, **kwargs):
         # **kwargs 接收所有多余的参数，防止报错
         self.vocab_size = vocab_size
@@ -27,7 +30,7 @@ class GPTConfig:
         }
 
 
-class MultiHeadAttention(nn.Module):
+class CausalSelfAttention(nn.Module):
     """
     多头因果自注意力机制 (Multi-Head Causal Self-Attention)
     """
@@ -53,22 +56,43 @@ class MultiHeadAttention(nn.Module):
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                      .view(1, 1, config.block_size, config.block_size))
 
-    def forward(self, x):
-        B, T, C = x.size() # Batch, Time(Sequence Length), Channel(d_model)
+    def forward(self, x, layer_past=None):
+        B, T, C = x.size() # batch_size, sequence_length, embedding_dim
 
         # 1. 计算 Q, K, V
         # 形状变换: [B, T, 3*C] -> [B, T, 3, n_head, d_k] -> [3, B, n_head, T, d_k]
         qkv = self.c_attn(x)
-        q, k, v = qkv.view(B, T, 3, self.n_head, C // self.n_head).permute(2, 0, 3, 1, 4)
+        # q, k, v = qkv.view(B, T, 3, self.n_head, C // self.n_head).permute(2, 0, 3, 1, 4)
+
+        q, k, v = qkv.split(self.d_model, dim=2)
+        # 转换为多头形状: (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+
+        # --- KV-Cache 核心逻辑 ---
+        if layer_past is not None:
+            past_k, past_v = layer_past
+            # 在时间维度(dim=2)上进行拼接
+            k = torch.cat((past_k, k), dim=2)
+            v = torch.cat((past_v, v), dim=2)
+
+        # 保存当前的完整 K, V 以便传给下一步
+        present = (k, v)
+        # ------------------------
 
         # 2. 计算注意力分数 (Scaled Dot-Product Attention)
         # att = (q @ k) * (1/sqrt(d_k))
-        # 形状: [B, n_head, T, d_k] @ [B, n_head, d_k, T] -> [B, n_head, T, T]
+        # 形状: [B, n_head, T, d_k] @ [B, n_head, d_k, T_total] -> [B, n_head, T, T_total]
+        # 如果是推理(使用了cache)，T=1，T_total=历史长度+1
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
         # 3. 应用因果掩码 (Causal Masking)
         # 将上三角部分(即未来信息)替换为 -inf，使其在 softmax 后为 0
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        # 只有在没有 past (即训练或第一步推理) 时才需要 mask
+        # 如果有 past，说明我们在生成第 N 个词，它有权看到之前所有的词，不需要遮蔽
+        if layer_past is None:
+            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
 
         # 4. Softmax 归一化与 Dropout
         att = F.softmax(att, dim=-1)
@@ -84,7 +108,8 @@ class MultiHeadAttention(nn.Module):
 
         # 输出投影与残差 dropout
         y = self.resid_dropout(self.c_proj(y))
-        return y
+
+        return y, present # 返回输出和缓存
 
 
 class FFN(nn.Module):
@@ -116,15 +141,16 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.d_model)
-        self.attn = MultiHeadAttention(config)
+        self.attn = CausalSelfAttention(config)
         self.ln_2 = nn.LayerNorm(config.d_model)
         self.fnn = FFN(config)
-
-    def forward(self, x):
+    def forward(self, x, layer_past=None):
         # Pre-Norm 结构: x = x + Sublayer(LayerNorm(x))
-        x = x + self.attn(self.ln_1(x))
+        # 注意这里接收 layer_past 并接收返回值 present
+        attn_out, present = self.attn(self.ln_1(x), layer_past=layer_past)
+        x = x + attn_out
         x = x + self.fnn(self.ln_2(x))
-        return x
+        return x, present
 
 
 class GPT(nn.Module):
@@ -175,7 +201,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, past_kv=None, use_cache=False):
         """
         前向传播
         idx: [Batch, Sequence Length] 的 Token 索引整数张量
@@ -184,22 +210,43 @@ class GPT(nn.Module):
         b, t = idx.size()
         assert t <= self.config.block_size, f"输入长度 {t} 超过最大上下文 {self.config.block_size}"
 
-        # 1. 嵌入层
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # [0, 1, ..., t-1]
+        # --- 1. 位置编码调整 ---
+        if past_kv is not None:
+            # 如果有缓存，说明是推理的中途
+            # 过去已经处理了多少个 token？
+            past_length = past_kv[0][0].size(2) 
+            # 当前的位置应该是从 past_length 开始
+            pos = torch.arange(past_length, past_length + t, dtype=torch.long, device=device)
+        else:
+            # 训练阶段或推理的第一步，从 0 开始
+            pos = torch.arange(0, t, dtype=torch.long, device=device)
 
-        # Token Embedding + Positional Embedding
-        tok_emb = self.transformer.wte(idx) # [B, T, d_model]
-        pos_emb = self.transformer.wpe(pos) # [T, d_model]
+        # 确保位置没有越界
+        if pos.max() >= self.config.block_size:
+             raise ValueError(f"Position index {pos.max()} out of range")
+
+        # --- 2. Embedding ---
+        tok_emb = self.transformer.wte(idx) 
+        pos_emb = self.transformer.wpe(pos) 
         x = self.transformer.drop(tok_emb + pos_emb)
 
-        # 2. Transformer Blocks
-        for block in self.transformer.h:
-            x = block(x)
+        # --- 3. Transformer Blocks 逐层传递 Cache ---
+        new_kv = []
+        for i, block in enumerate(self.transformer.h):
+            # 取出对应层的旧 cache
+            layer_past = past_kv[i] if past_kv is not None else None
 
-        # 3. Final Norm
+            # 前向传播
+            x, layer_present = block(x, layer_past=layer_past)
+
+            # 如果开启了 cache 模式，收集新的 cache
+            if use_cache:
+                new_kv.append(layer_present)
+
+        # 4. Final Norm
         x = self.transformer.ln_f(x)
 
-        # 4. 输出 Logits
+        # 5. 输出 Logits
         if targets is not None:
             # 如果是训练模式(有target)，我们计算 Loss
             logits = self.lm_head(x)
@@ -210,7 +257,7 @@ class GPT(nn.Module):
             logits = self.lm_head(x)
             loss = None
 
-        return logits, loss
+        return logits, loss, (new_kv if use_cache else None)
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, eos_id=None):
@@ -218,14 +265,21 @@ class GPT(nn.Module):
         自回归文本生成
         idx: (B, T) 形状的起始 token 序列
         """
+        # 初始化
+        past_kv = None
+
         for _ in range(max_new_tokens):
-            # 如果序列太长，截断到 block_size 以内
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+            # 如果是第一次迭代(past_kv is None)，我们需要把完整的 prompt 传进去来计算初始的 KV
+            # 如果不是第一次(past_kv 有值)，我们只需要传刚刚生成的最后一个 token
+            if past_kv is None:
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+            else:
+                idx_cond = idx[:, -1:] # 只取最后一个 token (B, 1)
 
-            # 前向传播
-            logits, _ = self(idx_cond)
+            # 前向传播，开启 use_cache=True
+            logits, _, past_kv = self(idx_cond, past_kv=past_kv, use_cache=True)
 
-            # 只取最后一个时间步的预测 logits
+            # 这里的 logits 已经是 [B, 1, vocab_size]，只取最后一个时间步的预测 logits
             logits = logits[:, -1, :] / temperature
 
             # 可选: Top-k 采样
@@ -241,79 +295,117 @@ class GPT(nn.Module):
             if eos_id is not None and idx_next.item() == eos_id:
                 break
 
-            # 拼接生成的 token
+            # 拼接生成的 token 到完整序列中
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
 
 
 # ==========================================
-# 自动化验证脚本
+# KV-Cache 增强版自动化验证脚本
 # ==========================================
 if __name__ == "__main__":
-    print("-" * 50)
-    print("开始 Mini-GPT 模型验证...")
-    print("-" * 50)
+    # 强制使用 CPU 进行确定性测试，避免 CUDA 带来的微小浮点误差干扰验证
+    device = 'cpu' 
+    
+    print("-" * 60)
+    print("开始 Mini-GPT (KV-Cache版) 模型验证...")
+    print("-" * 60)
 
-    # 1. 配置模型参数 (使用极小参数以便快速运行)
-    # 模拟一个超小的 GPT-3
+    # 1. 配置模型参数
     conf = GPTConfig(
-        vocab_size=100,  # 只有 100 个词
-        d_model=32,      # 嵌入维度 32
-        n_head=4,        # 4 个头
-        n_layer=2,       # 2 层
-        block_size=32,   # 上下文窗口 32
-        dropout=0.0
+        vocab_size=100,
+        d_model=64,      # 稍微加大一点维度，确保矩阵运算不退化
+        n_head=4,
+        n_layer=2,
+        block_size=32,
+        dropout=0.0      # 关闭 Dropout 以确保确定性比较
     )
 
     try:
-        model = GPT(conf)
-        print("[1/4] 模型实例化成功")
-        print(f"    参数量: {sum(p.numel() for p in model.parameters())/1e3:.2f}K")
+        model = GPT(conf).to(device)
+        model.eval() # 必须开启 eval 模式，关闭 Dropout
+        print("[1/5] 模型实例化成功")
     except Exception as e:
-        print(f"[1/4] 模型实例化失败: {e}")
+        print(f"[1/5] 模型实例化失败: {e}")
         exit()
 
-    # 2. 验证前向传播 (Forward Pass)
+    # 2. 验证标准前向传播 (不带 Cache)
     try:
-        # 创建一个 batch_size=2, seq_len=8 的随机输入
         batch_size = 2
-        seq_len = 8
-        dummy_input = torch.randint(0, conf.vocab_size, (batch_size, seq_len))
+        seq_len = 10
+        dummy_input = torch.randint(0, conf.vocab_size, (batch_size, seq_len)).to(device)
 
-        logits, loss = model(dummy_input)
-
+        # 这里的 use_cache=False 模拟训练时的行为
+        logits, _, _ = model(dummy_input, use_cache=False)
         expected_shape = (batch_size, seq_len, conf.vocab_size)
-        assert logits.shape == expected_shape, f"Logits shape 错误: {logits.shape} != {expected_shape}"
-        print("[2/4] 前向传播验证通过 (Output Shape 正确)")
+        assert logits.shape == expected_shape, f"Logits shape 错误: {logits.shape}"
+        print("[2/5] 标准前向传播验证通过 (Training Mode)")
     except Exception as e:
-        print(f"[2/4] 前向传播失败: {e}")
+        print(f"[2/5] 前向传播失败: {e}")
         exit()
 
-    # 3. 验证因果掩码 (Causal Mask)
-    # 这一步通过检查生成结果是否会报错，以及注意力矩阵是否为下三角来隐式验证
-    # 这里我们做一个直接的生成测试
+    # 3. 验证 KV-Cache 数值一致性 (核心验证)
+    # 目标：证明 `[t1, t2, t3]` 一次性算出的结果，和 `[t1, t2]` 算出 cache 后再喂入 `[t3]` 的结果完全一样
     try:
-        start_idx = torch.zeros((1, 1), dtype=torch.long) # 从 token 0 开始
-        generated = model.generate(start_idx, max_new_tokens=10)
+        # 构造一个随机输入 [B, T]
+        x = torch.randint(0, conf.vocab_size, (1, 10)).to(device)
+        
+        # --- 方式 A: 无 Cache (基准) ---
+        # 模拟一次性输入所有 token
+        logits_ref, _, _ = model(x, use_cache=False)
+        # 我们关注最后一个 token 的预测结果
+        last_logit_ref = logits_ref[:, -1, :] 
 
-        assert generated.shape == (1, 11), f"生成长度错误: {generated.shape}"
-        print("[3/4] 文本生成逻辑验证通过 (Autoregressive Generation)")
-        print(f"    生成序列示例: {generated.tolist()}")
+        # --- 方式 B: 有 Cache (分步) ---
+        # 步骤 1: 先输入前 9 个 token，生成 Cache
+        x_prefix = x[:, :-1] # 前 9 个
+        _, _, past_kv = model(x_prefix, use_cache=True)
+        
+        # 步骤 2: 输入第 10 个 token，并带上 Cache
+        x_last = x[:, -1:]   # 第 10 个
+        logits_step, _, _ = model(x_last, past_kv=past_kv, use_cache=True)
+        # 此时输出应该是 (B, 1, Vocab)，直接取出来
+        last_logit_step = logits_step[:, -1, :]
+
+        # --- 比较 ---
+        # 计算最大绝对误差
+        diff = (last_logit_ref - last_logit_step).abs().max().item()
+        
+        if diff > 1e-5:
+            raise AssertionError(f"数值不一致! Max Diff: {diff:.6f}\n"
+                                 "这意味着 KV-Cache 的拼接逻辑或位置编码处理有误。")
+        
+        print(f"[3/5] KV-Cache 数值一致性验证通过 (Diff: {diff:.2e})")
+        print("    证明：分步推理结果与一次性计算结果完全吻合。")
+
     except Exception as e:
-        print(f"[3/4] 生成测试失败: {e}")
+        print(f"[3/5] KV-Cache 验证失败: {e}")
+        import traceback
+        traceback.print_exc()
         exit()
 
-    # 4. 验证权重绑定 (Weight Tying)
+    # 4. 验证 generate 函数流程
     try:
-        # 检查 Embedding 指针是否等于 Head 指针
+        start_idx = torch.zeros((1, 1), dtype=torch.long).to(device)
+        # 生成 5 个新 token
+        generated = model.generate(start_idx, max_new_tokens=5)
+        
+        assert generated.shape == (1, 6), f"生成形状错误: {generated.shape}"
+        print("[4/5] 生成函数流程验证通过 (generate() with Cache)")
+    except Exception as e:
+        print(f"[4/5] 生成函数测试失败: {e}")
+        exit()
+
+    # 5. 验证权重绑定
+    try:
         assert model.transformer.wte.weight is model.lm_head.weight
-        print("[4/4] 权重绑定验证通过 (Weight Tying Active)")
+        print("[5/5] 权重绑定验证通过")
     except AssertionError:
-        print("[4/4] 权重绑定失败: Embedding 和 LM Head 权重不一致")
+        print("[5/5] 权重绑定失败")
         exit()
 
-    print("-" * 50)
-    print("Mini-GPT 架构验证全部通过！")
+    print("-" * 60)
+    print("Mini-GPT (with KV-cache) 架构验证全部通过！")
     print("模型结构在逻辑和张量形状上完全正确。")
-    print("-" * 50)
+    print("-" * 60)

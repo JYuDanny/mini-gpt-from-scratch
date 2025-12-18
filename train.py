@@ -1,18 +1,19 @@
 # --- train.py ---
-import torch
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from torch.optim import AdamW
-from tqdm import tqdm
 import os
 import math
 import argparse
 import yaml
-import sys
+import torch
+import torch.nn.functional as F
+
+from torch.utils.data import DataLoader
+from torch.optim import AdamW
+from tqdm import tqdm
 
 from src.dataset import BinaryDataset
 from src.tokenizer import Tokenizer
-from src.model import GPT, GPTConfig
+# from src.model import GPT, GPTConfig
+from src.model_kvcache import GPT, GPTConfig
 
 # --- 简单的学习率调度器 ---
 def get_lr(it, max_iters, learning_rate, warmup_iters=100, min_lr=1e-5):
@@ -34,22 +35,22 @@ def get_config():
     3. 用命令行参数覆盖 YAML 中的同名参数
     """
     parser = argparse.ArgumentParser(description="Train GPT Model")
-    
+
     # 配置文件路径
     parser.add_argument('--config', type=str, default=None, help='Path to .yaml config file')
-    
+
     # --- 定义所有可能的命令行参数 (默认值设为 None) ---
     # 只有设为 None，我们才知道用户到底有没有在命令行里输入这个参数
     # 如果用户没输，就用 YAML 里的；如果输了，就覆盖 YAML 里的。
-    
+
     # System
     parser.add_argument('--out_dir', type=str, default=None)
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--device', type=str, default=None)
-    
+
     # Data
     parser.add_argument('--batch_size', type=int, default=None)
-    
+
     # Model
     parser.add_argument('--n_layer', type=int, default=None)
     parser.add_argument('--d_model', type=int, default=None)
@@ -189,7 +190,7 @@ def train():
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-        _, loss = model(x, targets=y)
+        _, loss, _ = model(x, targets=y)
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -236,7 +237,7 @@ def evaluate(model, loader, device, eval_iters):
             x, y = next(loader_iter)
 
         x, y = x.to(device), y.to(device)
-        _, loss = model(x, targets=y)
+        _, loss, _ = model(x, targets=y)
         losses[k] = loss.item()
 
     model.train()
