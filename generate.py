@@ -50,7 +50,7 @@ def main():
     else:
         # 兼容旧版或未保存config的情况 (fallback)
         print("Warning: Config not found in checkpoint, utilizing default GPTConfig.")
-        config = GPTConfig() 
+        config = GPTConfig()
 
     # 4. 初始化模型并加载权重
     model = GPT(config)
@@ -75,11 +75,11 @@ def main():
     with torch.no_grad():
         for k in range(args.num_samples):
             y = model.generate(
-                x, 
-                max_new_tokens=args.max_new_tokens, 
-                temperature=args.temperature, 
+                x,
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
                 top_k=args.top_k,
-                eos_id=tokenizer.enc.eot_token
+                eos_id=tokenizer.enc.eot_token,
             )
             print(f"Sample {k+1}:")
             print(tokenizer.decode(y[0].tolist()))

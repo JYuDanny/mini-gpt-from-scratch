@@ -190,6 +190,7 @@ def train():
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
+        # _, loss = model(x, targets=y)
         _, loss, _ = model(x, targets=y)
         optimizer.zero_grad()
         loss.backward()
@@ -237,6 +238,7 @@ def evaluate(model, loader, device, eval_iters):
             x, y = next(loader_iter)
 
         x, y = x.to(device), y.to(device)
+        # _, loss = model(x, targets=y)
         _, loss, _ = model(x, targets=y)
         losses[k] = loss.item()
 

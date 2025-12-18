@@ -306,8 +306,8 @@ class GPT(nn.Module):
 # ==========================================
 if __name__ == "__main__":
     # 强制使用 CPU 进行确定性测试，避免 CUDA 带来的微小浮点误差干扰验证
-    device = 'cpu' 
-    
+    device = 'cpu'
+
     print("-" * 60)
     print("开始 Mini-GPT (KV-Cache版) 模型验证...")
     print("-" * 60)
@@ -350,7 +350,7 @@ if __name__ == "__main__":
     try:
         # 构造一个随机输入 [B, T]
         x = torch.randint(0, conf.vocab_size, (1, 10)).to(device)
-        
+
         # --- 方式 A: 无 Cache (基准) ---
         # 模拟一次性输入所有 token
         logits_ref, _, _ = model(x, use_cache=False)
@@ -361,7 +361,7 @@ if __name__ == "__main__":
         # 步骤 1: 先输入前 9 个 token，生成 Cache
         x_prefix = x[:, :-1] # 前 9 个
         _, _, past_kv = model(x_prefix, use_cache=True)
-        
+
         # 步骤 2: 输入第 10 个 token，并带上 Cache
         x_last = x[:, -1:]   # 第 10 个
         logits_step, _, _ = model(x_last, past_kv=past_kv, use_cache=True)
@@ -371,11 +371,11 @@ if __name__ == "__main__":
         # --- 比较 ---
         # 计算最大绝对误差
         diff = (last_logit_ref - last_logit_step).abs().max().item()
-        
+
         if diff > 1e-5:
             raise AssertionError(f"数值不一致! Max Diff: {diff:.6f}\n"
                                  "这意味着 KV-Cache 的拼接逻辑或位置编码处理有误。")
-        
+
         print(f"[3/5] KV-Cache 数值一致性验证通过 (Diff: {diff:.2e})")
         print("    证明：分步推理结果与一次性计算结果完全吻合。")
 
@@ -390,7 +390,7 @@ if __name__ == "__main__":
         start_idx = torch.zeros((1, 1), dtype=torch.long).to(device)
         # 生成 5 个新 token
         generated = model.generate(start_idx, max_new_tokens=5)
-        
+
         assert generated.shape == (1, 6), f"生成形状错误: {generated.shape}"
         print("[4/5] 生成函数流程验证通过 (generate() with Cache)")
     except Exception as e:
