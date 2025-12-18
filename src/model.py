@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class GPTConfig:
     def __init__(self, vocab_size=50257, d_model=512, n_head=8, n_layer=6, 
                  block_size=1024, dropout=0.1, bias=True, **kwargs):
@@ -27,20 +26,6 @@ class GPTConfig:
             'bias': self.bias
         }
 
-class GPTConfig:
-    """
-    GPT-3 模型配置类
-    """
-    def __init__(self, vocab_size=50257, d_model=512, n_head=8, n_layer=6, 
-                 block_size=1024, dropout=0.1, bias=True):
-        self.vocab_size = vocab_size    # 词表大小
-        self.d_model = d_model          # 嵌入维度
-        self.n_head = n_head            # 注意力头数
-        self.n_layer = n_layer          # 层数
-        self.block_size = block_size    # 最大上下文长度 (Context Window)
-        self.dropout = dropout          # Dropout 概率
-        self.bias = bias                # 是否在 Linear 层中使用偏置 (GPT-3 通常为 True)
-
 
 class MultiHeadAttention(nn.Module):
     """
@@ -54,15 +39,15 @@ class MultiHeadAttention(nn.Module):
         self.c_attn = nn.Linear(config.d_model, 3 * config.d_model, bias=config.bias)
         # 输出投影
         self.c_proj = nn.Linear(config.d_model, config.d_model, bias=config.bias)
-        
+
         # 正则化
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
-        
+
         self.n_head = config.n_head
         self.d_model = config.d_model
         self.dropout = config.dropout
-        
+
         # 注册一个下三角掩码矩阵 (Causal Mask)
         # register_buffer 确保它作为模型状态保存，但不是可训练参数
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
@@ -196,7 +181,7 @@ class GPT(nn.Module):
         idx: [Batch, Sequence Length] 的 Token 索引整数张量
         """
         device = idx.device
-        _, t = idx.size()
+        b, t = idx.size()
         assert t <= self.config.block_size, f"输入长度 {t} 超过最大上下文 {self.config.block_size}"
 
         # 1. 嵌入层
@@ -251,7 +236,7 @@ class GPT(nn.Module):
             # 计算概率并采样
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
-            
+
             # 早停检查
             if eos_id is not None and idx_next.item() == eos_id:
                 break
@@ -267,7 +252,7 @@ class GPT(nn.Module):
 # ==========================================
 if __name__ == "__main__":
     print("-" * 50)
-    print("开始 Micro-GPT-3 模型验证...")
+    print("开始 Mini-GPT 模型验证...")
     print("-" * 50)
 
     # 1. 配置模型参数 (使用极小参数以便快速运行)
@@ -280,7 +265,7 @@ if __name__ == "__main__":
         block_size=32,   # 上下文窗口 32
         dropout=0.0
     )
-    
+
     try:
         model = GPT(conf)
         print("[1/4] 模型实例化成功")
@@ -295,9 +280,9 @@ if __name__ == "__main__":
         batch_size = 2
         seq_len = 8
         dummy_input = torch.randint(0, conf.vocab_size, (batch_size, seq_len))
-        
+
         logits, loss = model(dummy_input)
-        
+
         expected_shape = (batch_size, seq_len, conf.vocab_size)
         assert logits.shape == expected_shape, f"Logits shape 错误: {logits.shape} != {expected_shape}"
         print("[2/4] 前向传播验证通过 (Output Shape 正确)")
@@ -311,14 +296,14 @@ if __name__ == "__main__":
     try:
         start_idx = torch.zeros((1, 1), dtype=torch.long) # 从 token 0 开始
         generated = model.generate(start_idx, max_new_tokens=10)
-        
+
         assert generated.shape == (1, 11), f"生成长度错误: {generated.shape}"
         print("[3/4] 文本生成逻辑验证通过 (Autoregressive Generation)")
         print(f"    生成序列示例: {generated.tolist()}")
     except Exception as e:
         print(f"[3/4] 生成测试失败: {e}")
         exit()
-        
+
     # 4. 验证权重绑定 (Weight Tying)
     try:
         # 检查 Embedding 指针是否等于 Head 指针
@@ -329,6 +314,6 @@ if __name__ == "__main__":
         exit()
 
     print("-" * 50)
-    print("Micro-GPT-3 架构验证全部通过！")
-    print("模型结构已经在逻辑和张量形状上完全正确。")
+    print("Mini-GPT 架构验证全部通过！")
+    print("模型结构在逻辑和张量形状上完全正确。")
     print("-" * 50)
