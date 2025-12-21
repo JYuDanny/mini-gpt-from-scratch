@@ -12,7 +12,7 @@ from src.model_kvcache import GPT, GPTConfig
 def parse_args():
     parser = argparse.ArgumentParser(description="GPT Text Generation")
 
-    # 只需要指定模型路径，不需要指定层数等参数
+    # 终端指定参数
     parser.add_argument('--ckpt', type=str, default='checkpoints/mini_gpt/ckpt_best.pt', help='模型 checkpoint 路径')
     parser.add_argument('--prompt', type=str, default='', help='提示文本 (留空则手动输入)')
     parser.add_argument('--num_samples', type=int, default=1, help='生成样本数量')
@@ -44,11 +44,11 @@ def main():
     checkpoint = torch.load(args.ckpt, map_location=device, weights_only=False)
 
     # 3. 自动恢复配置 (关键步骤)
-    # 我们的 train.py 保存了 'config' 字段
+    # train.py 在模型文件中保存了 'config' 字段
     if 'config' in checkpoint:
         config = checkpoint['config']
     else:
-        # 兼容旧版或未保存config的情况 (fallback)
+        # 兼容未保存config的情况 (fallback)
         print("Warning: Config not found in checkpoint, utilizing default GPTConfig.")
         config = GPTConfig()
 

@@ -27,7 +27,7 @@ class GPTConfig:
         }
 
 
-class MultiHeadAttention(nn.Module):
+class CausalAttention(nn.Module):
     """
     多头因果自注意力机制 (Multi-Head Causal Self-Attention)
     """
@@ -35,12 +35,11 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         assert config.d_model % config.n_head == 0
         # key, query, value 投影
-        # GPT-3 在 QKV 投影中通常包含 Bias (偏置)
         self.c_attn = nn.Linear(config.d_model, 3 * config.d_model, bias=config.bias)
         # 输出投影
         self.c_proj = nn.Linear(config.d_model, config.d_model, bias=config.bias)
 
-        # 正则化
+        # Dropout 正则化
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
 
@@ -49,7 +48,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = config.dropout
 
         # 注册一个下三角掩码矩阵 (Causal Mask)
-        # register_buffer 确保它作为模型状态保存，但不是可训练参数
+        # register_buffer 确保它作为模型状态保存，不是可训练参数
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                      .view(1, 1, config.block_size, config.block_size))
 
@@ -116,14 +115,14 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.d_model)
-        self.attn = MultiHeadAttention(config)
+        self.attn = CausalAttention(config)
         self.ln_2 = nn.LayerNorm(config.d_model)
-        self.fnn = FFN(config)
+        self.ffn = FFN(config)
 
     def forward(self, x):
         # Pre-Norm 结构: x = x + Sublayer(LayerNorm(x))
         x = x + self.attn(self.ln_1(x))
-        x = x + self.fnn(self.ln_2(x))
+        x = x + self.ffn(self.ln_2(x))
         return x
 
 
@@ -140,9 +139,9 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(dict(
             # Token Embedding (词嵌入)
             wte = nn.Embedding(config.vocab_size, config.d_model),
-            # Positional Embedding (位置嵌入 - 可学习)
+            # Positional Embedding (位置嵌入)
             wpe = nn.Embedding(config.block_size, config.d_model),
-            # Dropout
+            # Dropout (神经元随机失活)
             drop = nn.Dropout(config.dropout),
             # Transformer Layers (堆叠 Block)
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
@@ -153,12 +152,10 @@ class GPT(nn.Module):
         # Language Model Head (输出层)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-        # GPT-3 关键特征：Weight Tying (权重绑定)
-        # 将 Embedding 层的权重与输出层(lm_head)的权重共享
-        # 这不仅减少了参数，还被证明能提升效果
+        # Weight Tying (权重绑定)：将 Embedding 层的权重与输出层(lm_head)的权重共享
         self.transformer.wte.weight = self.lm_head.weight
 
-        # 参数初始化 (参考 GPT-2/3 论文)
+        # 参数初始化
         self.apply(self._init_weights)
 
         # 特殊初始化：对残差投影层进行缩放 (1/sqrt(2 * n_layer))
@@ -201,12 +198,11 @@ class GPT(nn.Module):
 
         # 4. 输出 Logits
         if targets is not None:
-            # 如果是训练模式(有target)，我们计算 Loss
+            # 训练模式，计算 Loss
             logits = self.lm_head(x)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
-            # 如果是推理模式(只取最后一步)，为了节省计算，可以只算最后一个 token
-            # 但为了通用性，这里返回所有 logits
+            # 推理模式，返回所有 logits
             logits = self.lm_head(x)
             loss = None
 

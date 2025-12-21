@@ -40,8 +40,6 @@ def get_config():
     parser.add_argument('--config', type=str, default=None, help='Path to .yaml config file')
 
     # --- 定义所有可能的命令行参数 (默认值设为 None) ---
-    # 只有设为 None，我们才知道用户到底有没有在命令行里输入这个参数
-    # 如果用户没输，就用 YAML 里的；如果输了，就覆盖 YAML 里的。
 
     # System
     parser.add_argument('--out_dir', type=str, default=None)
@@ -63,7 +61,7 @@ def get_config():
 
     args = parser.parse_args()
 
-    # --- 1. 初始化默认配置字典 (兜底) ---
+    # --- 1. 初始化默认配置字典 ---
     config = {
         'system': {'out_dir': 'checkpoints/mini_gpt', 'device': 'auto', 'resume': None},
         'data': {'data_dir': 'data', 'batch_size': 24, 'num_workers': 0},
@@ -86,7 +84,6 @@ def get_config():
                 config[section] = params # 新增的 section
 
     # --- 3. 命令行参数覆盖 (Override) ---
-    # 这种映射有点繁琐，但在没有引入 Hydra 等重型库之前，这是最清晰的方法
     if args.out_dir: config['system']['out_dir'] = args.out_dir
     if args.resume:  config['system']['resume'] = args.resume
     if args.device:  config['system']['device'] = args.device
@@ -102,7 +99,6 @@ def train():
     # 获取最终配置字典
     cfg = get_config()
 
-    # 方便调用，提取一些变量
     sys_cfg = cfg['system']
     model_cfg = cfg['model']
     data_cfg = cfg['data']
@@ -127,7 +123,6 @@ def train():
     val_loader = DataLoader(val_dataset, batch_size=data_cfg['batch_size'], shuffle=True, num_workers=data_cfg['num_workers'])
 
     # 3. Model
-    # 这里的关键是：vocab_size 来自 tokenizer，其他来自 config
     model_args = model_cfg.copy()
     model_args['vocab_size'] = tokenizer.vocab_size
 
@@ -209,7 +204,7 @@ def train():
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'config': gpt_conf, # 保存 GPTConfig 对象，方便推理加载
-                'full_config': cfg, # 保存完整的 YAML 配置，方便人类查看
+                'full_config': cfg, # 保存完整的 YAML 配置，方便查看
                 'iter_num': step + 1,
                 'best_val_loss': best_val_loss,
             }
