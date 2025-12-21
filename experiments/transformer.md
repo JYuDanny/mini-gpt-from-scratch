@@ -7,6 +7,11 @@
 - 大模型的能力边界在哪里
 - 大模型领域的前沿探索
 
+**文本嵌入：**
+
+- 不同架构下模型嵌入方法
+- Encoder-only transformer 架构模型的作用及局限性
+
 ## 楔子
 
 2017年，Google 团队发表 *Attention is All You Need*，给出了注意力计算公式，提出了纯粹基于 self-attention 机制的 transformer 架构，可以实现极为高效的并行计算。
@@ -23,7 +28,7 @@
 
 ## Mini-GPT：一个本地项目
 
-在算力资源极为有限的条件下，最大限度遵照 GPT-3 的模型架构去复刻一个微型的 GPT 项目。
+在算力资源极为有限的条件下，最大限度遵照 GPT-3 的模型架构去复刻一个微型的 GPT 项目。通过代码去看数据（张量）是如何在模型中流动的。
 
 **参数规模区别：**
 
@@ -57,9 +62,9 @@
 5. 注意力得分
    \( \text{scores} = \frac{Q K^\top}{\sqrt{d_k}} \in \mathbb{R}^{B \times h \times N \times N} \)
 
-6. Causal masking
+6. 因果注意力掩码
    \( \text{mask} \in \mathbb{R}^{N \times N} \): 上三角（不含对角线）为 \(-\infty\)，其余为 0  
-   \( \text{scores} = \text{scores} + \text{mask} \)（广播到 B×h）
+   \( \text{scores} = \text{scores} + \text{mask} \)
 
 7. 注意力权重  
    \( A = \text{softmax}(\text{scores}, \dim=-1) \in \mathbb{R}^{B \times h \times N \times N} \)
@@ -83,7 +88,7 @@
     其中 \( W^{\text{LM}} \in \mathbb{R}^{d \times |V|} \)
 
 13. 预测（训练时用交叉熵，推理时取最后一位）
-    \( P(x_{t+1} | x_{<t+1}) = \text{softmax}(\text{logits}_{t}) \)
+    $P(x_{t+1} | x_{<t+1}) = \text{softmax}(\text{logits}_{t})$
 
 ## LLM 的瓶颈
 
@@ -109,6 +114,30 @@ $\Rightarrow SV$, which is $O(N^2)$
 - 推理：KV-cache, paged attention
 - 训练：flash attention
 - 算法：sparse attention, linear attention
+
+## 文本嵌入
+
+**Decoder-only 架构下的文本嵌入：**
+
+主要指 Input Embedding 阶段。通过 Tokenizer 将文本切分为 token ID，随后在嵌入矩阵（embedding table）中进行静态查表。
+
+- 过程：Token ID -> 查表 -> 词向量矩阵（Matrix）。
+- 特点：此阶段不涉及 Token 间的交互，输出的矩阵仅包含原始词义信息，不含语境，是后续生成任务的输入“原材料”。
+
+**Encoder-only 架构下的文本嵌入（以 BGE 为代表）：**
+
+侧重于语义向量（semantic embedding）。以 BGE 为代表的检索模型，在查表基础上通过多层双向注意力对 token 矩阵进行深度融合，并进行“压缩”。
+
+- 过程：查表 -> 双向语境融合 -> Pooling（池化）-> 稠密向量（Vector）。
+- 特征：专门针对“检索”优化，将整段文本的语义高度浓缩为一个向量，便于计算文本间的相似度。
+
+**Encoder-only 架构的局限性：**
+
+- 预训练 Gap：Masked LM (完形填空) 任务与生成式/指令遵循任务不匹配，难以涌现 few-shot 能力
+- 开销：双向注意力破坏了因果链，无法利用 KV-cache 进行增量解码，长文本生成效率极低
+- 上限：任务泛化与逻辑推理能力的 Scaling 效率低于 decoder-only 架构
+
+remark. 出于成本和速度的考虑，采用两种架构模型相配合的方式处理各种分任务。
 
 ## Mini-GPT 参数统计
 
