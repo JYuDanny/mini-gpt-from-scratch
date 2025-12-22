@@ -6,17 +6,16 @@ import os
 import sys
 
 from src.tokenizer import Tokenizer
-# from src.model import GPT, GPTConfig
-from src.model_kvcache import GPT, GPTConfig
+from src.model_rope import GPT, GPTConfig
 
 def parse_args():
     parser = argparse.ArgumentParser(description="GPT Text Generation")
 
     # 终端指定参数
-    parser.add_argument('--ckpt', type=str, default='checkpoints/mini_gpt/ckpt_best.pt', help='模型 checkpoint 路径')
+    parser.add_argument('--ckpt', type=str, default='checkpoints/mini_gpt_rope/ckpt_best.pt', help='模型 checkpoint 路径')
     parser.add_argument('--prompt', type=str, default='', help='提示文本 (留空则手动输入)')
     parser.add_argument('--num_samples', type=int, default=1, help='生成样本数量')
-    parser.add_argument('--max_new_tokens', type=int, default=200, help='生成最大长度')
+    parser.add_argument('--max_new_tokens', type=int, default=300, help='生成最大长度')
     parser.add_argument('--temperature', type=float, default=0.8, help='采样温度')
     parser.add_argument('--top_k', type=int, default=200, help='Top-K 采样')
     parser.add_argument('--device', type=str, default='auto', help='设备')
@@ -52,9 +51,42 @@ def main():
         print("Warning: Config not found in checkpoint, utilizing default GPTConfig.")
         config = GPTConfig()
 
-    # 4. 初始化模型并加载权重
+    # --- 关键修改开始 ---
+
+    # 4. 初始化模型
     model = GPT(config)
-    model.load_state_dict(checkpoint['model'])
+
+    # 4.1 处理 State Dict (清洗权重)
+    state_dict = checkpoint['model']
+
+    # 剔除不需要加载的键
+    # (1) freqs_cis: 它是 Buffer，应该由当前模型根据当前配置重新计算，不要加载旧的
+    # (2) ...可以根据需要剔除其他临时变量
+    unwanted_prefix = '_orig_mod.' # 如果你用了 torch.compile，会有这个前缀
+    for k,v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+
+    if "freqs_cis" in state_dict:
+        print("Info: Dropping 'freqs_cis' from checkpoint to allow re-computation.")
+        del state_dict["freqs_cis"]
+
+    # 4.2 加载权重
+    # 使用 strict=False，允许 checkpoint 里少一些 buffer (比如 freqs_cis)
+    # 但如果有形状不匹配的 Linear 层权重，依然会报错，这是我们要的
+    keys = model.load_state_dict(state_dict, strict=False)
+
+    # 验证关键权重是否丢失 (过滤掉 freqs_cis 的缺失警告)
+    missing_keys = [k for k in keys.missing_keys if "freqs_cis" not in k]
+    unexpected_keys = [k for k in keys.unexpected_keys if "freqs_cis" not in k]
+
+    if missing_keys:
+        print(f"Warning: Missing keys: {missing_keys}")
+    if unexpected_keys:
+        print(f"Warning: Unexpected keys: {unexpected_keys}")
+
+    # --- 关键修改结束 ---
+
     model.to(device)
     model.eval()
     print(f"Model loaded. Layers: {config.n_layer}, Model dim: {config.d_model}, Block size: {config.block_size}")
