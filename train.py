@@ -13,8 +13,8 @@ from tqdm import tqdm
 from src.dataset import BinaryDataset
 from src.tokenizer import Tokenizer
 # from src.model import GPT, GPTConfig
-from src.model_kvcache import GPT, GPTConfig
-# from src.model_rope import GPT, GPTConfig
+# from src.model_kvcache import GPT, GPTConfig
+from src.model_rope import GPT, GPTConfig
 
 # --- 简单的学习率调度器 ---
 def get_lr(it, max_iters, learning_rate, warmup_iters=100, min_lr=1e-5):
@@ -68,7 +68,7 @@ def get_config():
         'data': {'data_dir': 'data', 'batch_size': 24, 'num_workers': 0},
         'model': {'block_size': 256, 'd_model': 512, 'n_layer': 6, 'n_head': 8, 'dropout': 0.1, 'bias': True},
         'optimizer': {'learning_rate': 3e-4, 'weight_decay': 1e-2},
-        'trainer': {'eval_interval': 1000, 'eval_iters': 50, 'max_iters': 30000}
+        'trainer': {'eval_interval': 1000, 'eval_iters': 50, 'max_iters': 36000}
     }
 
     # --- 2. 加载 YAML 并更新 ---

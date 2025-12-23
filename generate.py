@@ -13,7 +13,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="GPT Text Generation")
 
     # 终端指定参数
-    parser.add_argument('--ckpt', type=str, default='checkpoints/mini_gpt/ckpt_best.pt', help='模型 checkpoint 路径')
+    parser.add_argument('--ckpt', type=str, default='checkpoints/mini_gpt_raw/ckpt_best.pt', help='模型 checkpoint 路径')
     parser.add_argument('--prompt', type=str, default='', help='提示文本 (留空则手动输入)')
     parser.add_argument('--num_samples', type=int, default=1, help='生成样本数量')
     parser.add_argument('--max_new_tokens', type=int, default=200, help='生成最大长度')
