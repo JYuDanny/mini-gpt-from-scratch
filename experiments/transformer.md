@@ -19,7 +19,7 @@
 > Vaswani, Ashish, et al. "Attention is all you need." Advances in neural information processing systems 30 (2017).
 
 \[
-\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right)V
 \]
 
 2020年，OpenAI 团队发表 *Language Models are Few-shot Leaners*。此前 OpenAI 研究团队就已经确定了 decoder-only 的生成式预训练方案。这篇文章里，虽然 GPT-3 在模型架构设计上依然相对保守，但他们在参数规模上进行极大程度的扩展（175B），最终验证了语言模型的 scaling law，提出了 in-context learning 这种全新范式。
@@ -96,13 +96,13 @@
 注意力公式：
 
 \[
-\text{Attention}(Q, K, V) = softmax\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right)V
 \]
 
 其中，$Q, K, V\in \mathbb{R}^{N\times d}$
-$\Rightarrow QK^T\in \mathbb{R}^{N\times N}$, which is $O(N^2)$
-$\Rightarrow \text{softmax}(QK^T)=S$, which is $O(N^2)$
-$\Rightarrow SV$, which is $O(N^2)$
+$\Rightarrow QK^\top\in \mathbb{R}^{N\times N}$, which is $O(N^2)$
+$\Rightarrow \text{softmax}(QK^\top)=A$, which is $O(N^2)$
+$\Rightarrow AV$, which is $O(N^2)$
 
 **开销：**
 
