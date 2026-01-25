@@ -7,11 +7,6 @@
 - 大模型的能力边界在哪里
 - 大模型领域的前沿探索
 
-**文本嵌入：**
-
-- 不同架构下模型嵌入方法
-- Encoder-only transformer 架构模型的作用及局限性
-
 ## 楔子
 
 2017年，Google 团队发表 *Attention is All You Need*，给出了注意力计算公式，提出了纯粹基于 self-attention 机制的 transformer 架构，可以实现极为高效的并行计算。
@@ -30,6 +25,25 @@
 
 在算力资源极为有限的条件下，最大限度遵照 GPT-3 的模型架构去复刻一个微型的 GPT 项目。通过代码去看数据（张量）是如何在模型中流动的。
 
+神经网络（深度学习模型）等效于一个非线性算子（函数）。
+
+**输入：** 一个包含 n 个 token 的文本；
+**输出：** the next token，也就是根据输入文本内容生成的第 n+1 个 token。
+
+由于词表和嵌入向量之间的简单映射关系，模型的输入和输出：
+**输入：** token 矩阵 $X\in \mathbb{R}^{n \times d}$，其中 $n$ 是 token 的数量，$d$ 是每个 token 的嵌入维度；
+**输出：** 预测矩阵 $X' = f(X)\in \mathbb{R}^{n\times d}$，$n, d$ 的含义不变，此时我们只关注矩阵的第 $n$ 行，也就是 the next token。
+
+**模型流程概况（粗略）：**
+
+考虑一个只有一层 transformer 架构的神经网络，同时忽略所有维持运算和训练稳定的组件，模型退化为一个非常简单的结构：
+
+输入矩阵 $X$ $\xRightarrow{\text{Attention formula}}$ 注意力矩阵 $A$ $\xRightarrow{\text{Multilayer perceptron}}$ 输出矩阵 $X'$
+
+1. 计算 $X$ 在不同语境下的投影矩阵 $Q, K, V$，这三个矩阵的形状保持为 $n\times d$；
+2. 代入注意力计算公式得到注意力矩阵 $A\in \mathbb{R}^{n\times d}$（只需考虑 $QK^\top V$），残差连接得到矩阵 $X_{att}=X+A\in\mathbb{R}^{n\times d}$；
+3. 通过一个两层的前馈神经网络矩阵先升维为 $n\times 4d$，激活函数计算后降维为 $n\times d$ 矩阵，残差连接得到输出矩阵 $X'=X_{att}+\text{FNN}(X_{att})\in\mathbb{R}^{n\times d}$。
+
 **参数规模区别：**
 
 | 模型 | Mini-GPT | GPT-3 |
@@ -40,7 +54,7 @@
 
 **和如今主流架构的区别：**
 
-- 位置编码方式：参考 GPT-2 将位置嵌入当作 token 嵌入的偏置，没有引入RoPE；
+- 位置编码方式：绝对位置编码，位置嵌入被当作 token 嵌入的偏置，没有引入RoPE；
 - 模型输出层：由于参数量过小，输出层和嵌入层进行权重绑定，以防止模型完全失去泛化效果。但因为 GPT-3 的参数规模极大，所以输出层是一个独立的矩阵，这样可以增大模型容量，模型学习能力进一步增强；
 - FFN 层的激活函数以及归一化方法。
 
@@ -115,30 +129,6 @@ $\Rightarrow AV$, which is $O(N^2)$
 - 推理：KV-cache, paged attention
 - 训练：flash attention
 - 算法：sparse attention, linear attention
-
-## 文本嵌入
-
-**Decoder-only 架构下的文本嵌入：**
-
-主要指 Input Embedding 阶段。通过 Tokenizer 将文本切分为 token ID，随后在嵌入矩阵（embedding table）中进行静态查表。
-
-- 过程：Token ID -> 查表 -> 词向量矩阵（Matrix）。
-- 特点：此阶段不涉及 Token 间的交互，输出的矩阵仅包含原始词义信息，不含语境，是后续生成任务的输入“原材料”。
-
-**Encoder-only 架构下的文本嵌入（以 BGE 为代表）：**
-
-侧重于语义向量（semantic embedding）。以 BGE 为代表的检索模型，在查表基础上通过多层双向注意力对 token 矩阵进行深度融合，并进行“压缩”。
-
-- 过程：查表 -> 双向语境融合 -> Pooling（池化）-> 稠密向量（Vector）。
-- 特征：专门针对“检索”优化，将整段文本的语义高度浓缩为一个向量，便于计算文本间的相似度。
-
-**Encoder-only 架构的局限性：**
-
-- 预训练 Gap：Masked LM (完形填空) 任务与生成式/指令遵循任务不匹配，难以涌现 few-shot 能力
-- 开销：双向注意力破坏了因果链，无法利用 KV-cache 进行增量解码，长文本生成效率极低
-- 上限：任务泛化与逻辑推理能力的 Scaling 效率低于 decoder-only 架构
-
-remark. 出于成本和速度的考虑，采用两种架构模型相配合的方式处理各种分任务。
 
 ## Mini-GPT 参数统计
 
