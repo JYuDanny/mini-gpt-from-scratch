@@ -29,9 +29,7 @@ from tqdm import tqdm
 
 from src.dataset import BinaryDataset
 from src.tokenizer import Tokenizer
-# from src.model import GPT, GPTConfig
-# from src.model_kvcache import GPT, GPTConfig
-from src.model_rope import GPT, GPTConfig
+from src.model import GPT, GPTConfig
 
 # --- 学习率调度器 / Learning Rate Scheduler ---
 def get_lr(it, max_iters, learning_rate, warmup_iters=100, min_lr=1e-5):
