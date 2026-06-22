@@ -7,6 +7,7 @@ system:
 
 data:
   data_dir: 'data'
+  data_file: 'wikitext103.bin'  # 训练数据文件名 / Training data filename
   batch_size: 32
   num_workers: 0
 

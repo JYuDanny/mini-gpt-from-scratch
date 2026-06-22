@@ -1,0 +1,12 @@
+# Mini-GPT from Scratch — Python Dependencies
+# 在 mini-gpt conda 环境中安装 / Install in mini-gpt conda environment:
+#   pip install -r requirements.txt
+#
+# PyTorch 需要单独安装 (CUDA 版本) / PyTorch must be installed separately (CUDA version):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+tiktoken>=0.5.0       # GPT-2 BPE 分词器 / GPT-2 BPE tokenizer
+tqdm>=4.65.0          # 进度条 / Progress bar
+numpy>=1.24.0         # memmap 内存映射数组 / Memory-mapped arrays
+datasets>=2.14.0      # HuggingFace 数据集下载 / HuggingFace dataset loading
+pyyaml>=6.0           # YAML 配置文件解析 / YAML config file parsing

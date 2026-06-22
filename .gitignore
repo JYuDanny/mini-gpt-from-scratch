@@ -8,3 +8,4 @@ wandb/
 *.tmp
 .DS_Store
 data/
+skills/
