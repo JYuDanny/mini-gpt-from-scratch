@@ -27,7 +27,7 @@ class GPTConfig:
         }
 
 
-class CausalAttention(nn.Module):
+class CausalSelfAttention(nn.Module):
     """
     多头因果自注意力机制 (Multi-Head Causal Self-Attention)
     """
@@ -115,7 +115,7 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.d_model)
-        self.attn = CausalAttention(config)
+        self.attn = CausalSelfAttention(config)
         self.ln_2 = nn.LayerNorm(config.d_model)
         self.ffn = FFN(config)
 

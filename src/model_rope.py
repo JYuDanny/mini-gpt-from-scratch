@@ -130,13 +130,13 @@ class Block(nn.Module):
         self.ln_1 = nn.LayerNorm(config.d_model)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = nn.LayerNorm(config.d_model)
-        self.fnn = FFN(config)
+        self.ffn = FFN(config)
 
     def forward(self, x, freqs_cis, layer_past=None):
         # 必须透传 freqs_cis
         attn_out, present = self.attn(self.ln_1(x), freqs_cis=freqs_cis, layer_past=layer_past)
         x = x + attn_out
-        x = x + self.fnn(self.ln_2(x))
+        x = x + self.ffn(self.ln_2(x))
         return x, present
 
 class GPT(nn.Module):
@@ -154,6 +154,14 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight
         self.apply(self._init_weights)
+
+        # 特殊初始化：对残差投影层进行缩放 (1/sqrt(2 * n_layer))
+        # 目的是在深层网络中控制方差增长，防止残差信号逐层放大
+        # Special init: scale residual projection layers to control variance
+        # growth in deep networks, preventing residual signal amplification
+        for pn, p in self.named_parameters():
+            if pn.endswith('c_proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # [RoPE 修改点 2] 预计算 RoPE 频率表
         head_dim = config.d_model // config.n_head

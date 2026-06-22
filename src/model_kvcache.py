@@ -143,13 +143,13 @@ class Block(nn.Module):
         self.ln_1 = nn.LayerNorm(config.d_model)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = nn.LayerNorm(config.d_model)
-        self.fnn = FFN(config)
+        self.ffn = FFN(config)
     def forward(self, x, layer_past=None):
         # Pre-Norm 结构: x = x + Sublayer(LayerNorm(x))
         # 注意这里接收 layer_past 并接收返回值 present
         attn_out, present = self.attn(self.ln_1(x), layer_past=layer_past)
         x = x + attn_out
-        x = x + self.fnn(self.ln_2(x))
+        x = x + self.ffn(self.ln_2(x))
         return x, present
 
 

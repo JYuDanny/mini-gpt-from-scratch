@@ -1,4 +1,4 @@
-# --- generate.py ---
+# --- generate_rope.py ---
 import time
 import torch
 import argparse
