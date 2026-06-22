@@ -28,8 +28,10 @@ model:
   n_layer: 6                      # Transformer 层数 / Number of layers
   n_head: 6                       # 注意力头数 / Number of attention heads
   dropout: 0.1                    # Dropout 比例
-  bias: true                      # 是否使用偏置 / Whether to use bias
-  pos_enc_type: 'rope'            # 位置编码类型: 'rope' | 'learned'
+  bias: false                     # 是否使用偏置 (SwiGLU+RMSNorm 下不需要)
+  pos_enc_type: 'rope'            # 位置编码: 'rope' | 'learned'
+  norm_type: 'rmsnorm'            # 归一化: 'rmsnorm' | 'layernorm'
+  ffn_type: 'swiglu'              # 前馈网络: 'swiglu' | 'gelu'
 
 # ============================================================
 # 优化器配置 / Optimizer Configuration
