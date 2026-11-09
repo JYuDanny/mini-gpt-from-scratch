@@ -64,8 +64,7 @@ amp:
 # torch.compile 加速 / torch.compile Acceleration
 # ============================================================
 compile:
-  enabled: true                   # 开启图编译加速 (需要 PyTorch 2.0+)
-  mode: 'reduce-overhead'         # 'default' | 'reduce-overhead' | 'max-autotune'
+  enabled: false                  # 开启图编译加速 (需要 Linux + Triton)
 
 # ============================================================
 # 日志配置 / Logging Configuration

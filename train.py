@@ -83,7 +83,7 @@ def get_config():
     """
     parser = argparse.ArgumentParser(description="Train GPT Model")
 
-    parser.add_argument('--config', type=str, default=None, help='YAML config file path')
+    parser.add_argument('--config', type=str, default='configs/mini_gpt.yaml', help='YAML config file path')
 
     # System
     parser.add_argument('--out_dir', type=str, default=None)
@@ -117,7 +117,7 @@ def get_config():
         'trainer': {'eval_interval': 1000, 'eval_iters': 50, 'max_iters': 20000,
                     'warmup_iters': 100, 'min_lr': 1e-5},
         'amp': {'enabled': True, 'dtype': 'bfloat16'},
-        'compile': {'enabled': True},
+        'compile': {'enabled': False},
         'logging': {'log_dir': 'logs', 'log_interval': 10},
     }
 

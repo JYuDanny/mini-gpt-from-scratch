@@ -10,15 +10,22 @@
 
 ## 目录 / Table of Contents
 
-- [项目概览 / Overview](#项目概览--overview)
-- [硬件要求 / Hardware Requirements](#硬件要求--hardware-requirements)
-- [快速开始 / Quick Start](#快速开始--quick-start)
-- [项目结构 / Project Structure](#项目结构--project-structure)
-- [训练数据 / Training Data](#训练数据--training-data)
-- [模型配置 / Configuration](#模型配置--configuration)
-- [训练效率优化 / Training Optimizations](#训练效率优化--training-optimizations)
-- [模型验证 / Model Verification](#模型验证--model-verification)
-- [参考资料 / References](#参考资料--references)
+- [Mini-GPT from Scratch / 从零训练 Mini-GPT](#mini-gpt-from-scratch--从零训练-mini-gpt)
+  - [目录 / Table of Contents](#目录--table-of-contents)
+  - [项目概览 / Overview](#项目概览--overview)
+    - [架构对比 / Architecture Comparison](#架构对比--architecture-comparison)
+  - [硬件要求 / Hardware Requirements](#硬件要求--hardware-requirements)
+  - [快速开始 / Quick Start](#快速开始--quick-start)
+    - [1. 环境配置 / Environment Setup](#1-环境配置--environment-setup)
+    - [2. 准备训练数据 / Prepare Training Data](#2-准备训练数据--prepare-training-data)
+    - [3. 训练模型 / Train the Model](#3-训练模型--train-the-model)
+    - [4. 生成文本 / Generate Text](#4-生成文本--generate-text)
+  - [项目结构 / Project Structure](#项目结构--project-structure)
+  - [训练数据 / Training Data](#训练数据--training-data)
+  - [模型配置 / Configuration](#模型配置--configuration)
+  - [训练效率优化 / Training Optimizations](#训练效率优化--training-optimizations)
+  - [模型验证 / Model Verification](#模型验证--model-verification)
+  - [参考资料 / References](#参考资料--references)
 
 ---
 
